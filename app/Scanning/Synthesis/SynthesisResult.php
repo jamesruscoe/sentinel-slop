@@ -13,12 +13,14 @@ final class SynthesisResult
      * @param  array<string, list<array{phase: int, title: string, body: string}>>  $prompts  editor value => rendered prompts
      * @param  array<string, array{filename: string, body: string}>  $rulesFiles  editor value => rendered rules file
      * @param  array{included: int, omitted: int, estimated_tokens: int}  $budget
+     * @param  array{system: string, user: string, model: string}  $payload  Exactly what was sent to the LLM.
      */
     public function __construct(
         public readonly array $phases,
         public readonly array $prompts,
         public readonly array $rulesFiles,
         public readonly array $budget,
+        public readonly array $payload = ['system' => '', 'user' => '', 'model' => ''],
     ) {}
 
     /**

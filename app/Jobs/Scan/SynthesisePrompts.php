@@ -75,7 +75,7 @@ class SynthesisePrompts extends ScanStageJob
             }
         }
 
-        $scan->forceFill(['synthesis_error' => null])->save();
+        $scan->forceFill(['synthesis_error' => null, 'synthesis_payload' => $result->payload])->save();
         $workspace->writeArtifact('synthesis', ['phases' => $result->phases, 'budget' => $result->budget]);
     }
 }

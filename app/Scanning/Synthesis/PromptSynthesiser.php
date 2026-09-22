@@ -71,7 +71,7 @@ final class PromptSynthesiser
             'included' => $payload['included'],
             'omitted' => $payload['omitted'],
             'estimated_tokens' => $payload['estimated_tokens'],
-        ]);
+        ], ['system' => $system, 'user' => $user, 'model' => $request->model]);
     }
 
     /**
