@@ -26,7 +26,15 @@ class DoctorCommand extends Command
                 continue;
             }
 
-            $rows[] = [$tool, 'ok', $this->version($runner, $tool, $status['command'] ?? [])];
+            $version = $this->version($runner, $tool, $status['command'] ?? []);
+            $pinned = $tool === 'semgrep' ? (string) config('sentinel.tools.semgrep_version', '') : '';
+            if ($pinned !== '' && ! str_contains($version, $pinned)) {
+                $rows[] = [$tool, 'VERSION', "{$version} (verified against {$pinned}; re-run the canary tests)"];
+
+                continue;
+            }
+
+            $rows[] = [$tool, 'ok', $version];
         }
 
         $this->table(['Tool', 'Status', 'Detail'], $rows);

@@ -103,6 +103,8 @@ return [
         'eslint' => env('SENTINEL_ESLINT_PATH', base_path('node_modules/eslint/bin/eslint.js')),
         'jscpd' => env('SENTINEL_JSCPD_PATH', base_path('node_modules/jscpd/run-jscpd.js')),
         'semgrep' => env('SENTINEL_SEMGREP_BINARY', 'semgrep'),
+        // The Semgrep release the bundled flags and rules were verified against. sentinel:doctor warns on mismatch.
+        'semgrep_version' => env('SENTINEL_SEMGREP_VERSION', '1.177.0'),
         'gitleaks' => env('SENTINEL_GITLEAKS_BINARY', 'gitleaks'),
         'timeout_seconds' => (int) env('SENTINEL_TOOL_TIMEOUT', 300),
         'phpstan_memory_limit' => env('SENTINEL_PHPSTAN_MEMORY', '1G'),
@@ -146,6 +148,9 @@ return [
         ],
         'scale' => (float) env('SENTINEL_SCORE_SCALE', 1.0),
         'critical_cap' => (int) env('SENTINEL_SCORE_CRITICAL_CAP', 40),
+        // Inline suppression comments per thousand lines cost this many points each, up to the cap.
+        'suppression_weight' => (float) env('SENTINEL_SCORE_SUPPRESSION_WEIGHT', 2.0),
+        'suppression_cap' => (int) env('SENTINEL_SCORE_SUPPRESSION_CAP', 20),
     ],
 
     /*
@@ -157,7 +162,10 @@ return [
         // Models a user may pick per scan. Comma-separated in SENTINEL_LLM_MODELS; the default model is always allowed.
         'models' => array_values(array_unique(array_filter(array_map('trim', explode(',', (string) env('SENTINEL_LLM_MODELS', env('SENTINEL_LLM_MODEL', 'claude-sonnet-5'))))))),
         'token_budget' => (int) env('SENTINEL_LLM_TOKEN_BUDGET', 24000),
+        'max_output_tokens' => (int) env('SENTINEL_LLM_MAX_OUTPUT_TOKENS', 8000),
+        'timeout_seconds' => (int) env('SENTINEL_LLM_TIMEOUT', 180),
         'max_snippet_lines' => 6,
+        'max_findings' => (int) env('SENTINEL_LLM_MAX_FINDINGS', 150),
         'target_editors' => ['claude_code', 'cursor'],
     ],
 

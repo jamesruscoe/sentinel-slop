@@ -58,6 +58,10 @@ PHPStan, Pint, ESLint and jscpd are installed with Composer/npm. Semgrep and git
 
 Check everything with `php artisan sentinel:doctor`.
 
+## LLM configuration
+
+Prompt synthesis goes through [Prism](https://prismphp.com). Set `SENTINEL_LLM_PROVIDER` (default `anthropic`), `ANTHROPIC_API_KEY`, and optionally `SENTINEL_LLM_MODELS` (comma-separated model ids users may pick per scan; the default `SENTINEL_LLM_MODEL` is always allowed). Only redacted findings, the detected stack and the bundled rulesets are ever sent.
+
 **Windows Defender note:** `tests/Fixtures/repos/backdoor-samples` and the temp copies made under `%TEMP%\sentinel-tests` contain webshell-like text and may be quarantined mid-test. Add both folders as Defender exclusions before running the suite.
 
 ## Tests and static analysis

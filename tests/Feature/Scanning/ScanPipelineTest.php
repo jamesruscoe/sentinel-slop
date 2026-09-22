@@ -10,13 +10,18 @@ use App\Models\Repository;
 use App\Models\Scan;
 use App\Models\User;
 use App\Scanning\Contracts\GitHubContentSource;
+use App\Scanning\Contracts\LlmClient;
 use App\Scanning\Exceptions\FetchLimitExceededException;
+use App\Scanning\Exceptions\SynthesisException;
 use App\Scanning\Fetch\ScanWorkspace;
 use App\Services\Scanning\ContentSourceResolver;
 use App\Services\Scanning\ScanDispatcher;
 use App\Services\Scanning\ScanWorkspaceFactory;
 use Illuminate\Support\Facades\Event;
+use Prism\Prism\Facades\Prism;
+use Prism\Prism\Testing\StructuredResponseFake;
 use Tests\Support\FakeContentSource;
+use Tests\Support\FakeLlmClient;
 
 beforeEach(function () {
     $base = sys_get_temp_dir().'/sentinel-tests/pipeline-'.bin2hex(random_bytes(4));
@@ -27,6 +32,7 @@ beforeEach(function () {
     $this->repository = Repository::factory()->for(Installation::factory()->for(User::factory()))->create(['full_name' => 'acme/laravel-basic', 'default_branch' => null]);
     $this->source = FakeContentSource::fromDirectory(fixturePath('laravel-basic'));
     $this->source->languages = ['PHP' => 9000, 'Blade' => 500];
+    Prism::fake([StructuredResponseFake::make()->withStructured(FakeLlmClient::samplePlan())]);
 
     app()->instance(ContentSourceResolver::class, new class($this->source) implements ContentSourceResolver
     {
@@ -55,14 +61,19 @@ test('a scan runs through the pipeline, stores results and deletes its files', f
         ->and($scan->detected_stack['frameworks'])->toBe(['laravel', 'livewire'])
         ->and($scan->detected_stack['languages'])->toBe(['PHP' => 9000, 'Blade' => 500])
         ->and($scan->skipped_files['counts'])->toBe(['binary' => 1, 'generated' => 1, 'minified' => 1])
-        ->and($scan->findings()->count())->toBe(0)
+        ->and($scan->slop_score)->toBeInt()
+        ->and($scan->lines_of_code)->toBeGreaterThan(0)
+        ->and($scan->suppression_count)->toBe(0)
+        ->and($scan->prompts()->count())->toBe(10)
+        ->and($scan->rulesFiles()->pluck('filename')->all())->toBe(['CLAUDE.md', '.cursor/rules/sentinel-slop.mdc'])
+        ->and($scan->synthesis_error)->toBeNull()
         ->and($scan->started_at)->not->toBeNull()
         ->and($scan->finished_at)->not->toBeNull()
         ->and($this->repository->fresh()->default_branch)->toBe('main')
         ->and(is_dir($this->storage.'/'.$scan->uuid))->toBeFalse();
 
     $statuses = collect(Event::dispatched(ScanProgressed::class))->map(fn (array $args) => $args[0]->scan->status->value)->unique()->values()->all();
-    expect($statuses)->toBe(['fetching', 'preflight', 'detecting', 'analysing', 'heuristics', 'normalising', 'complete']);
+    expect($statuses)->toBe(['fetching', 'preflight', 'detecting', 'analysing', 'heuristics', 'normalising', 'scoring', 'synthesising', 'complete']);
     Event::assertDispatched(ScanCompleted::class);
     Event::assertNotDispatched(ScanFailed::class);
 });
@@ -120,4 +131,17 @@ test('the artisan command queues a scan for an installed repository', function (
     $this->artisan('sentinel:scan', ['repository' => 'acme/unknown'])->assertFailed();
 
     expect(Scan::query()->count())->toBe(1);
+});
+
+test('a failed prompt synthesis keeps the scan results and records the reason', function () {
+    Event::fake([ScanProgressed::class, ScanCompleted::class, ScanFailed::class]);
+    app()->instance(LlmClient::class, new FakeLlmClient(new SynthesisException('LLM request failed: timeout')));
+
+    $scan = app(ScanDispatcher::class)->dispatch($this->repository);
+    $scan->refresh();
+
+    expect($scan->status)->toBe(ScanStatus::Complete)
+        ->and($scan->slop_score)->toBeInt()
+        ->and($scan->prompts()->count())->toBe(0)
+        ->and($scan->synthesis_error)->toContain('Prompt generation failed');
 });

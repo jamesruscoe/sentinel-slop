@@ -79,11 +79,15 @@ Every tool runs through `ProcessRunner` (Laravel's Process facade, argv arrays, 
 | gitleaks | `dir --config <bundled toml> --gitleaks-ignore-path <bundled dir> --ignore-gitleaks-allow --redact=100` | `.gitleaks.toml` allowlist-all, `.gitleaksignore`, `gitleaks:allow` |
 | Semgrep | `--config <bundled rules dir> --metrics=off --no-git-ignore --disable-nosem --x-ignore-semgrepignore-files` | `.semgrepignore`, `.semgrep.yml`, `nosemgrep` |
 
+**Known fragility:** `--x-ignore-semgrepignore-files` is an internal Semgrep flag (Semgrep warns it may change or disappear without notice). `config/sentinel.php` → `tools.semgrep_version` pins the release these flags and rules were verified against (`sentinel:doctor` warns on mismatch), and the Semgrep canary test is the early warning: if a future Semgrep honours the repo's `.semgrepignore` again, that test fails. When it does, look for a replacement flag, or delete `.semgrepignore` files from the workspace in preflight as a fallback.
+
 `tests/Feature/Scanning/MaliciousConfigsTest.php` runs each analyser against `tests/Fixtures/repos/malicious-configs`, whose configs write `CANARY_*` files if loaded and try to suppress findings. Any canary file or missing finding fails the build.
 
 Stage wiring (in `ScanningServiceProvider`): preflight runs Semgrep `malware` rules + gitleaks (hits → critical); RunAnalysers runs PHPStan, Pint, ESLint, Semgrep `quality`, jscpd; RunSlopHeuristics runs the php-parser heuristics + Semgrep `slop` rules. Semgrep rule ids are prefixed by the rules path on output; `SemgrepAnalyser` strips back to `sentinel.…`.
 
-PHPStan without the repo's vendor: level 5, unknown-symbol identifiers (`class.notFound`, `*.notFound`, `*.nonObject`, `missingType.*`) are ignored by identifier in the bundled neon so members resolved through unknown parents (Eloquent, controllers) do not flood results; `return.type`, `argument.type`, dead-code and syntax errors still surface.
+PHPStan without the repo's vendor: level 5, unknown-symbol identifiers (`class.notFound`, `*.notFound`, `*.nonObject`, `missingType.*`) are ignored by identifier in the bundled neon so members resolved through unknown parents (Eloquent, controllers) do not flood results; `return.type`, `argument.type`, dead-code and syntax errors still surface. Member-not-found is recovered by `UndefinedMembersHeuristic`: it indexes every class in the repo with php-parser and reports `$this->m()`, `self::m()`, typed-parameter and typed-property calls only when the whole hierarchy is declared in the repo (or PHP built-in) and no `__call`/`__get` magic exists. PHPStan's `ignoreErrors` cannot be conditioned on hierarchy resolvability, hence the heuristic.
+
+`SuppressionDensityHeuristic` counts inline suppression comments (eslint-disable, @phpstan-ignore, phpcs:ignore, nosemgrep, gitleaks:allow, @ts-ignore, noqa, ...), emits a Low finding per suppression and stores `scans.suppression_count` / `suppression_density` (per 1k non-blank lines). Density feeds the score and the synthesis payload.
 
 `php artisan sentinel:doctor` checks every binary and prints versions. Windows Defender quarantines textbook webshell text: keep malware fixtures split into small, non-signature-like samples and exclude the repo and `%TEMP%\sentinel-tests` from real-time scanning when running the suite.
 
@@ -97,14 +101,22 @@ Per-scan LLM model: `scans.llm_model` (validated against `sentinel.synthesis.mod
 - `/github/setup` claims personal installations directly via the API when the webhook has not landed yet; otherwise it shows a refreshing "waiting" page.
 - Webhooks: `POST /webhooks/github`, CSRF-exempt, HMAC verified by `VerifyGitHubWebhookSignature`, idempotent via `webhook_deliveries`.
 
-### Slop score (phase 4)
+### Slop score
+
+`App\Scanning\Score\SlopScoreCalculator`, weights in `config/sentinel.php` → `score`:
 
 ```
-penalty = Σ weight[severity]              weights in config/sentinel.php (critical 25, high 10, medium 4, low 1, info 0)
-density = penalty / max(loc, 1) * 1000    penalty per thousand lines of analysed code
-score   = max(0, 100 - round(density * scale))
+penalty  = Σ weight[severity]              (critical 25, high 10, medium 4, low 1, info 0)
+density  = penalty / max(loc, 1) * 1000    penalty per thousand non-blank, non-comment lines (LinesOfCodeCounter)
+base     = 100 - round(density * scale)
+supp     = min(suppression_cap, round(suppression_density * suppression_weight))   (default 2 points per suppression per 1k lines, cap 20)
+score    = max(0, base - supp)
 if any malware/secrets finding: score = min(score, critical_cap)   (default 40)
 ```
+
+### Synthesis
+
+`SynthesisePrompts` builds a `SynthesisRequest` (stack, score, normalised findings, matching rulesets from `resources/rulesets/`, suppression stats, per-scan model) and `PromptSynthesiser` makes one structured LLM call through the `LlmClient` contract (`PrismLlmClient` adapter). `SynthesisPayloadBuilder` orders findings most severe first, scrubs every message and snippet with `SecretRedactor`, and trims to `synthesis.token_budget` minus the rulesets and `synthesis.max_findings`. The LLM returns an editor-neutral plan (5 phases + rules sections) which Blade templates in `resources/prompts/` render per editor (`editors/claude-code/*`, `editors/cursor/*`); the templates add the "run tests before and after, no unrelated changes" wrapper so it is never left to the model. Prompts go to `prompts`, rules files to `rules_files`. Synthesis failure is non-fatal: `scans.synthesis_error` records the reason and the scan still completes with findings and score. Tests use `Prism::fake()` or `Tests\Support\FakeLlmClient`; never call a real provider in tests.
 
 ## Conventions
 
@@ -138,6 +150,6 @@ Site: http://sentinel-slop.test (junction in Herd's Sites directory points at th
 1. Foundation (done): Herd, packages, GitHub login, GitHub App install + webhooks, models, migrations, config, this file.
 2. Scanning core (done): `App\Scanning` interfaces/DTOs, FetchRepository, PreflightCheck, stack detection, normalisation, cleanup, fixture repos in `tests/Fixtures/repos/` (hand-written stubs only; vendor/node_modules there are gitignored and created at test time).
 3. Analysers (done): ProcessRunner, bundled configs, tool runners, slop heuristics, malicious-config canary tests, `sentinel:doctor`.
-4. Synthesis: rulesets, slop score, redaction, Prism, prompt and rules-file generation.
+4. Synthesis (done): rulesets, slop score, redaction, Prism, prompt and rules-file generation, undefined-member and suppression-density heuristics.
 5. UI: landing, dashboard, live scan page, results, history.
 6. Hardening and deploy prep: rate limiting, failure handling, sweeper, Horizon supervisors, README for Forge.

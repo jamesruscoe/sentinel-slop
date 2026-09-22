@@ -18,7 +18,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  */
 #[Fillable([
     'repository_id', 'user_id', 'status', 'commit_sha', 'slop_score', 'detected_stack',
-    'skipped_files', 'lines_of_code', 'error_message', 'started_at', 'finished_at', 'llm_model',
+    'skipped_files', 'lines_of_code', 'suppression_count', 'suppression_density', 'error_message', 'synthesis_error',
+    'started_at', 'finished_at', 'llm_model',
 ])]
 class Scan extends Model
 {
@@ -36,6 +37,8 @@ class Scan extends Model
             'detected_stack' => 'array',
             'skipped_files' => 'array',
             'lines_of_code' => 'integer',
+            'suppression_count' => 'integer',
+            'suppression_density' => 'float',
             'started_at' => 'datetime',
             'finished_at' => 'datetime',
         ];

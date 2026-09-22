@@ -7,6 +7,7 @@ use App\Models\Scan;
 use App\Scanning\Analysers\HeuristicRegistry;
 use App\Scanning\Data\Stack;
 use App\Scanning\Fetch\ScanWorkspace;
+use App\Scanning\Heuristics\SuppressionDensityHeuristic;
 use App\Services\Scanning\ScanWorkspaceFactory;
 use RuntimeException;
 
@@ -28,7 +29,14 @@ class RunSlopHeuristics extends ScanStageJob
         foreach (app(HeuristicRegistry::class)->supporting($stack) as $heuristic) {
             $this->progress($scan, "Checking {$heuristic->name()}");
 
-            $findings = $heuristic->run($workspace->repoPath());
+            if ($heuristic instanceof SuppressionDensityHeuristic) {
+                $stats = $heuristic->analyse($workspace->repoPath());
+                $findings = $stats['findings'];
+                $scan->forceFill(['suppression_count' => $stats['count'], 'suppression_density' => $stats['density']])->save();
+                $workspace->writeArtifact('suppressions', ['count' => $stats['count'], 'lines' => $stats['lines'], 'density' => $stats['density'], 'by_kind' => $stats['by_kind']]);
+            } else {
+                $findings = $heuristic->run($workspace->repoPath());
+            }
 
             $workspace->writeArtifact('findings/'.$heuristic->name(), ['tool' => $heuristic->name(), 'findings' => $findings->toArray()]);
         }
