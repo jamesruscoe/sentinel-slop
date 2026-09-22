@@ -101,10 +101,25 @@ return [
         'phpstan' => env('SENTINEL_PHPSTAN_PATH', base_path('vendor/phpstan/phpstan/phpstan')),
         'pint' => env('SENTINEL_PINT_PATH', base_path('vendor/laravel/pint/builds/pint')),
         'eslint' => env('SENTINEL_ESLINT_PATH', base_path('node_modules/eslint/bin/eslint.js')),
-        'jscpd' => env('SENTINEL_JSCPD_PATH', base_path('node_modules/jscpd/bin/jscpd')),
+        'jscpd' => env('SENTINEL_JSCPD_PATH', base_path('node_modules/jscpd/run-jscpd.js')),
         'semgrep' => env('SENTINEL_SEMGREP_BINARY', 'semgrep'),
         'gitleaks' => env('SENTINEL_GITLEAKS_BINARY', 'gitleaks'),
         'timeout_seconds' => (int) env('SENTINEL_TOOL_TIMEOUT', 300),
+        'phpstan_memory_limit' => env('SENTINEL_PHPSTAN_MEMORY', '1G'),
+    ],
+
+    /*
+    | Thresholds for analysers and slop heuristics.
+    */
+    'analysis' => [
+        'max_file_lines' => (int) env('SENTINEL_MAX_FILE_LINES', 600),
+        'max_function_lines' => (int) env('SENTINEL_MAX_FUNCTION_LINES', 80),
+        'jscpd' => [
+            'min_lines' => 10,
+            'min_tokens' => 70,
+        ],
+        'near_duplicate_similarity' => 0.85,
+        'narrating_comment_overlap' => 0.6,
     ],
 
     /*

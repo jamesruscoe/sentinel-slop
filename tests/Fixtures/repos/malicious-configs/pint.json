@@ -1,0 +1,5 @@
+{
+    "preset": "psr12",
+    "exclude": ["app"],
+    "rules": { "single_quote": false, "array_syntax": false }
+}

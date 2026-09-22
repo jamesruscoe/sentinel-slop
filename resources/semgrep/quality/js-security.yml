@@ -1,0 +1,60 @@
+# Sentinel Slop bundled rules: JavaScript/TypeScript security smells.
+rules:
+  - id: sentinel.quality.js.eval-usage
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "eval()/new Function() executes strings as code"
+    metadata:
+      sentinel_category: security
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+      - pattern: setTimeout("...", ...)
+      - pattern: setInterval("...", ...)
+
+  - id: sentinel.quality.js.innerhtml-from-variable
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Assigning a non-literal to innerHTML/outerHTML risks XSS; use textContent or sanitise"
+    metadata:
+      sentinel_category: security
+    patterns:
+      - pattern-either:
+          - pattern: $EL.innerHTML = $X
+          - pattern: $EL.outerHTML = $X
+          - pattern: $EL.insertAdjacentHTML($P, $X)
+      - pattern-not: $EL.innerHTML = "..."
+      - pattern-not: $EL.outerHTML = "..."
+      - pattern-not: $EL.insertAdjacentHTML($P, "...")
+
+  - id: sentinel.quality.js.child-process-with-template
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Shell command built from interpolated input; use execFile/spawn with an argument array"
+    metadata:
+      sentinel_category: security
+    pattern-either:
+      - pattern: $CP.exec(`...${$X}...`, ...)
+      - pattern: $CP.execSync(`...${$X}...`, ...)
+      - pattern: $CP.exec("..." + $X, ...)
+      - pattern: $CP.execSync("..." + $X, ...)
+
+  - id: sentinel.quality.js.hardcoded-http-credentials
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Credentials appear to be hard-coded in a request"
+    metadata:
+      sentinel_category: security
+    pattern-either:
+      - pattern: |
+          { ..., headers: { ..., Authorization: "...", ... }, ... }
+      - pattern: |
+          { ..., auth: { ..., password: "...", ... }, ... }
+
+  - id: sentinel.quality.js.debug-left-in
+    languages: [javascript, typescript]
+    severity: INFO
+    message: "debugger statement left in code"
+    metadata:
+      sentinel_category: slop
+    pattern: debugger

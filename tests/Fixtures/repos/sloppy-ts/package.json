@@ -1,0 +1,12 @@
+{
+    "name": "acme-sloppy-ts",
+    "private": true,
+    "dependencies": {
+        "react": "^19.0.0"
+    },
+    "devDependencies": {
+        "eslint": "^9.0.0",
+        "jest": "^29.0.0",
+        "typescript": "^5.0.0"
+    }
+}

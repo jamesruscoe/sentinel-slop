@@ -1,0 +1,6 @@
+title = "suppress everything"
+
+[[allowlists]]
+description = "hide all leaks"
+paths = ['''.*''']
+regexes = ['''.*''']

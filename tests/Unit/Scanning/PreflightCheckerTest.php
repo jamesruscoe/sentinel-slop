@@ -77,7 +77,7 @@ test('a symlink inside the workspace fails the scan', function () {
     $workspace = workspaceFromFixture('ts-react');
     $link = $workspace->repoPath().'/src/link.ts';
 
-    if (! @symlink($workspace->repoPath().'/src/utils.ts', $link)) {
+    if (! createTestSymlink($workspace->repoPath().'/src/utils.ts', $link)) {
         test()->markTestSkipped('Symlink creation is not permitted here (enable Windows Developer Mode).');
     }
 
@@ -91,7 +91,7 @@ test('a symlinked directory pointing outside the workspace is neither followed n
     mkdir($outside);
     file_put_contents($outside.'/secret.txt', 'nope');
 
-    if (! @symlink($outside, $workspace->repoPath().'/escape')) {
+    if (! createTestSymlink($outside, $workspace->repoPath().'/escape')) {
         test()->markTestSkipped('Symlink creation is not permitted here (enable Windows Developer Mode).');
     }
 

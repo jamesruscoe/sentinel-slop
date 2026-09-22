@@ -1,0 +1,92 @@
+# Sentinel Slop bundled rules: PHP security smells (not malware, but must be fixed).
+rules:
+  - id: sentinel.quality.php.eval-usage
+    languages: [php]
+    severity: ERROR
+    message: "eval() executes arbitrary strings as code; there is almost always a safer design"
+    metadata:
+      sentinel_category: security
+    pattern: eval(...)
+
+  - id: sentinel.quality.php.shell-command-with-variable
+    languages: [php]
+    severity: ERROR
+    message: "Shell command built from a variable; use escapeshellarg()/Process with an argv array"
+    metadata:
+      sentinel_category: security
+    patterns:
+      - pattern-either:
+          - pattern: $FN("...$X...")
+          - pattern: $FN("..." . $X)
+          - pattern: $FN($X . "...")
+      - metavariable-regex:
+          metavariable: $FN
+          regex: ^(system|exec|shell_exec|passthru|popen|proc_open)$
+
+  - id: sentinel.quality.php.raw-sql-with-interpolation
+    languages: [php]
+    severity: ERROR
+    message: "SQL built by string interpolation; use parameter bindings"
+    metadata:
+      sentinel_category: security
+    pattern-either:
+      - pattern: DB::raw("...$X...")
+      - pattern: DB::select("...$X...")
+      - pattern: DB::statement("...$X...")
+      - pattern: $Q->whereRaw("...$X...")
+      - pattern: $Q->selectRaw("...$X...")
+      - pattern: $Q->orderByRaw("...$X...")
+      - pattern: $PDO->query("...$X...")
+      - pattern: mysqli_query($C, "...$X...")
+
+  - id: sentinel.quality.php.unserialize-of-input
+    languages: [php]
+    severity: ERROR
+    message: "unserialize() of request input allows object injection"
+    metadata:
+      sentinel_category: security
+    pattern-either:
+      - pattern: unserialize($_GET[...], ...)
+      - pattern: unserialize($_POST[...], ...)
+      - pattern: unserialize($_REQUEST[...], ...)
+      - pattern: unserialize($_COOKIE[...], ...)
+      - pattern: unserialize($R->input(...), ...)
+      - pattern: unserialize($R->get(...), ...)
+
+  - id: sentinel.quality.php.extract-request
+    languages: [php]
+    severity: WARNING
+    message: "extract() on request data lets clients overwrite local variables"
+    metadata:
+      sentinel_category: security
+    pattern-either:
+      - pattern: extract($_GET, ...)
+      - pattern: extract($_POST, ...)
+      - pattern: extract($_REQUEST, ...)
+      - pattern: extract($R->all(), ...)
+
+  - id: sentinel.quality.php.weak-password-hash
+    languages: [php]
+    severity: WARNING
+    message: "md5/sha1 are not password hashes; use Hash::make()/password_hash()"
+    metadata:
+      sentinel_category: security
+    patterns:
+      - pattern-either:
+          - pattern: md5($P)
+          - pattern: sha1($P)
+      - metavariable-regex:
+          metavariable: $P
+          regex: (?i)pass|pwd|secret
+
+  - id: sentinel.quality.php.debug-left-in
+    languages: [php]
+    severity: WARNING
+    message: "Debug output left in code"
+    metadata:
+      sentinel_category: slop
+    pattern-either:
+      - pattern: dd(...)
+      - pattern: dump(...)
+      - pattern: var_dump(...)
+      - pattern: ray(...)

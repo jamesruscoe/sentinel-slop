@@ -1,0 +1,102 @@
+<?php
+
+namespace App\Http\Controllers;
+
+class ReportController
+{
+    public function build(): array
+    {
+        $rows = [];
+        $rows[] = "row 1";
+        $rows[] = "row 2";
+        $rows[] = "row 3";
+        $rows[] = "row 4";
+        $rows[] = "row 5";
+        $rows[] = "row 6";
+        $rows[] = "row 7";
+        $rows[] = "row 8";
+        $rows[] = "row 9";
+        $rows[] = "row 10";
+        $rows[] = "row 11";
+        $rows[] = "row 12";
+        $rows[] = "row 13";
+        $rows[] = "row 14";
+        $rows[] = "row 15";
+        $rows[] = "row 16";
+        $rows[] = "row 17";
+        $rows[] = "row 18";
+        $rows[] = "row 19";
+        $rows[] = "row 20";
+        $rows[] = "row 21";
+        $rows[] = "row 22";
+        $rows[] = "row 23";
+        $rows[] = "row 24";
+        $rows[] = "row 25";
+        $rows[] = "row 26";
+        $rows[] = "row 27";
+        $rows[] = "row 28";
+        $rows[] = "row 29";
+        $rows[] = "row 30";
+        $rows[] = "row 31";
+        $rows[] = "row 32";
+        $rows[] = "row 33";
+        $rows[] = "row 34";
+        $rows[] = "row 35";
+        $rows[] = "row 36";
+        $rows[] = "row 37";
+        $rows[] = "row 38";
+        $rows[] = "row 39";
+        $rows[] = "row 40";
+        $rows[] = "row 41";
+        $rows[] = "row 42";
+        $rows[] = "row 43";
+        $rows[] = "row 44";
+        $rows[] = "row 45";
+        $rows[] = "row 46";
+        $rows[] = "row 47";
+        $rows[] = "row 48";
+        $rows[] = "row 49";
+        $rows[] = "row 50";
+        $rows[] = "row 51";
+        $rows[] = "row 52";
+        $rows[] = "row 53";
+        $rows[] = "row 54";
+        $rows[] = "row 55";
+        $rows[] = "row 56";
+        $rows[] = "row 57";
+        $rows[] = "row 58";
+        $rows[] = "row 59";
+        $rows[] = "row 60";
+        $rows[] = "row 61";
+        $rows[] = "row 62";
+        $rows[] = "row 63";
+        $rows[] = "row 64";
+        $rows[] = "row 65";
+        $rows[] = "row 66";
+        $rows[] = "row 67";
+        $rows[] = "row 68";
+        $rows[] = "row 69";
+        $rows[] = "row 70";
+        $rows[] = "row 71";
+        $rows[] = "row 72";
+        $rows[] = "row 73";
+        $rows[] = "row 74";
+        $rows[] = "row 75";
+        $rows[] = "row 76";
+        $rows[] = "row 77";
+        $rows[] = "row 78";
+        $rows[] = "row 79";
+        $rows[] = "row 80";
+        $rows[] = "row 81";
+        $rows[] = "row 82";
+        $rows[] = "row 83";
+        $rows[] = "row 84";
+        $rows[] = "row 85";
+        $rows[] = "row 86";
+        $rows[] = "row 87";
+        $rows[] = "row 88";
+        $rows[] = "row 89";
+        $rows[] = "row 90";
+        return $rows;
+    }
+}

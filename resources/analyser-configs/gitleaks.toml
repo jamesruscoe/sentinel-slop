@@ -1,0 +1,10 @@
+# Sentinel Slop's bundled gitleaks config. Always passed with --config so a
+# repository's own .gitleaks.toml is never consulted.
+title = "Sentinel Slop"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Sentinel Slop's own throwaway test key pair"
+paths = ['''tests/Fixtures/keys/.*''']

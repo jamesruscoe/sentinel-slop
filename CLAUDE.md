@@ -39,6 +39,9 @@ app/
     Fetch/          GitHubTreeFetcher, ScanWorkspace, KnpGitHubContentSource
     Preflight/      PreflightChecker, BinaryDetector, GeneratedFileDetector
     Detect/         StackDetector + manifest parsers (data only) + ToolingDetector
+    Analysers/      ProcessAnalyser base, PhpStan/Pint/Eslint/Jscpd/Semgrep/Gitleaks analysers, registries, CategoryMapper
+    Heuristics/     narrating comments, swallowed exceptions, hallucinated deps, placeholders, near-duplicates, oversized units
+    Process/        ToolLocator (binary discovery), EnvironmentAllowlist (scrubbed child env)
     Normalise/      FindingNormaliser, FindingDeduplicator, SecretRedactor
     Support/        PathGuard, PathMatcher, FileWalker
 config/sentinel.php limits, skip lists, tool paths, score weights, synthesis settings
@@ -62,6 +65,27 @@ resources/prompts/           Blade templates for LLM prompts and rules files
 Stages pass data through JSON artifacts in the workspace's `work/` dir (`fetch`, `preflight`, `stack`, `findings/<tool>`, `findings-normalised`); only normalised findings reach the database. Workspace layout: `{scan_storage_path}/{uuid}/repo` (files) and `/work` (artifacts).
 
 Fetch rules: tree entries with mode 120000 (symlink) or type commit (submodule) are recorded as skipped and never written; only modes 100644/100755 are downloaded; paths go through `PathGuard` (no `..`, absolute, backslash, NUL, `.git`); skipped directories are not downloaded at all; limits are checked against tree sizes before any blob is fetched and again on the real bytes. Preflight fails the scan on symlinks, path escapes or limits, and deletes binaries (by content), executables (magic bytes), generated/minified files and dependency dirs from the workspace, recording each in `scans.skipped_files` (`{total, counts, entries[≤500], truncated}`).
+
+### Analysers (phase 3)
+
+Every tool runs through `ProcessRunner` (Laravel's Process facade, argv arrays, timeout, `EnvironmentAllowlist` strips all inherited env except PATH/TEMP/HOME-style basics) with cwd set to `work/<tool>/` inside the workspace, never the repo. Config discovery is disabled per tool:
+
+| Tool | Flags | Canary test |
+|---|---|---|
+| PHPStan | `--configuration=<bundled neon>`; cwd is not the repo, so `vendor/autoload.php`/`phpstan.neon`/`composer.json` are never seen; no bootstrapFiles, no Larastan | `phpstan.neon`, `.dist` variants, bootstrap file, runtime `vendor/autoload.php` |
+| Pint | `--test --config=<bundled pint.json> --cache-file=<work>` | `pint.json` excludes, `.php-cs-fixer*.php` |
+| ESLint | `--no-config-lookup --config <bundled mjs> --no-inline-config`; cwd = workspace root (ESLint's base path is cwd), target `repo` | `eslint.config.*`, `.eslintrc*`, `.eslintignore`, package.json `eslintConfig`, `/* eslint-disable */` |
+| jscpd | `--config <bundled json>` (`gitignore: false`) | `.jscpd.json` ignore-all + custom reporter, package.json `jscpd` |
+| gitleaks | `dir --config <bundled toml> --gitleaks-ignore-path <bundled dir> --ignore-gitleaks-allow --redact=100` | `.gitleaks.toml` allowlist-all, `.gitleaksignore`, `gitleaks:allow` |
+| Semgrep | `--config <bundled rules dir> --metrics=off --no-git-ignore --disable-nosem --x-ignore-semgrepignore-files` | `.semgrepignore`, `.semgrep.yml`, `nosemgrep` |
+
+`tests/Feature/Scanning/MaliciousConfigsTest.php` runs each analyser against `tests/Fixtures/repos/malicious-configs`, whose configs write `CANARY_*` files if loaded and try to suppress findings. Any canary file or missing finding fails the build.
+
+Stage wiring (in `ScanningServiceProvider`): preflight runs Semgrep `malware` rules + gitleaks (hits → critical); RunAnalysers runs PHPStan, Pint, ESLint, Semgrep `quality`, jscpd; RunSlopHeuristics runs the php-parser heuristics + Semgrep `slop` rules. Semgrep rule ids are prefixed by the rules path on output; `SemgrepAnalyser` strips back to `sentinel.…`.
+
+PHPStan without the repo's vendor: level 5, unknown-symbol identifiers (`class.notFound`, `*.notFound`, `*.nonObject`, `missingType.*`) are ignored by identifier in the bundled neon so members resolved through unknown parents (Eloquent, controllers) do not flood results; `return.type`, `argument.type`, dead-code and syntax errors still surface.
+
+`php artisan sentinel:doctor` checks every binary and prints versions. Windows Defender quarantines textbook webshell text: keep malware fixtures split into small, non-signature-like samples and exclude the repo and `%TEMP%\sentinel-tests` from real-time scanning when running the suite.
 
 Per-scan LLM model: `scans.llm_model` (validated against `sentinel.synthesis.models`); null means the configured default. `php artisan sentinel:scan owner/name --model=...` queues a scan from the CLI.
 
@@ -113,7 +137,7 @@ Site: http://sentinel-slop.test (junction in Herd's Sites directory points at th
 
 1. Foundation (done): Herd, packages, GitHub login, GitHub App install + webhooks, models, migrations, config, this file.
 2. Scanning core (done): `App\Scanning` interfaces/DTOs, FetchRepository, PreflightCheck, stack detection, normalisation, cleanup, fixture repos in `tests/Fixtures/repos/` (hand-written stubs only; vendor/node_modules there are gitignored and created at test time).
-3. Analysers: ProcessRunner, bundled configs, tool runners, slop heuristics, malicious-config tests.
+3. Analysers (done): ProcessRunner, bundled configs, tool runners, slop heuristics, malicious-config canary tests, `sentinel:doctor`.
 4. Synthesis: rulesets, slop score, redaction, Prism, prompt and rules-file generation.
 5. UI: landing, dashboard, live scan page, results, history.
 6. Hardening and deploy prep: rate limiting, failure handling, sweeper, Horizon supervisors, README for Forge.

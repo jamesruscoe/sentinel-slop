@@ -1,0 +1,8 @@
+{
+    "name": "malicious-configs",
+    "type": "commonjs",
+    "scripts": { "postinstall": "node canary.js" },
+    "eslintConfig": { "rules": { "eqeqeq": "off" } },
+    "jscpd": { "ignore": ["**/*"] },
+    "devDependencies": { "eslint": "^9.0.0" }
+}

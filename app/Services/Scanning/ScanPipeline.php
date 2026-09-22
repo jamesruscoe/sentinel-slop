@@ -8,11 +8,12 @@ use App\Jobs\Scan\DetectStack;
 use App\Jobs\Scan\FetchRepository;
 use App\Jobs\Scan\NormaliseFindings;
 use App\Jobs\Scan\PreflightCheck;
+use App\Jobs\Scan\RunAnalysers;
+use App\Jobs\Scan\RunSlopHeuristics;
 use App\Models\Scan;
 
 /**
- * The ordered job chain for one scan. Later phases insert RunAnalysers and
- * RunSlopHeuristics after DetectStack, and CalculateSlopScore and
+ * The ordered job chain for one scan. Phase 4 inserts CalculateSlopScore and
  * SynthesisePrompts after NormaliseFindings. Cleanup always runs before the
  * scan is marked complete; failures are cleaned up by ScanFailureHandler.
  *
@@ -29,6 +30,8 @@ final class ScanPipeline
             new FetchRepository($scan),
             new PreflightCheck($scan),
             new DetectStack($scan),
+            new RunAnalysers($scan),
+            new RunSlopHeuristics($scan),
             new NormaliseFindings($scan),
             new CleanupScan($scan),
             new CompleteScan($scan),

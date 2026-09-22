@@ -6,6 +6,8 @@ use App\Services\GitHub\WebhookSignatureVerifier;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
+use Symfony\Component\Process\Process;
+use Tests\Support\Workspaces;
 use Tests\TestCase;
 
 pest()->extend(TestCase::class)
@@ -41,10 +43,7 @@ function temporaryWorkspace(): ScanWorkspace
         mkdir($base, 0700, true);
     }
 
-    $workspace = ScanWorkspace::create($base, 'ws-'.bin2hex(random_bytes(6)));
-    test()->workspacesToDelete[] = $workspace;
-
-    return $workspace;
+    return Workspaces::register(ScanWorkspace::create($base, 'ws-'.bin2hex(random_bytes(6))));
 }
 
 /**
@@ -69,4 +68,26 @@ function workspaceFromFixture(string $fixture): ScanWorkspace
 function fixturePath(string $fixture): string
 {
     return __DIR__.'/Fixtures/repos/'.$fixture;
+}
+
+/**
+ * Create a symlink for a test. PHP's symlink() never passes Windows'
+ * unprivileged-create flag, so on Windows fall back to mklink, which honours
+ * Developer Mode. Returns false when the platform refuses.
+ */
+function createTestSymlink(string $target, string $link): bool
+{
+    if (@symlink($target, $link)) {
+        return true;
+    }
+
+    if (PHP_OS_FAMILY !== 'Windows') {
+        return false;
+    }
+
+    $flag = is_dir($target) ? '/D' : '';
+    $process = new Process(['cmd', '/c', 'mklink', ...($flag !== '' ? [$flag] : []), str_replace('/', chr(92), $link), str_replace('/', chr(92), $target)]);
+    $process->run();
+
+    return is_link($link);
 }

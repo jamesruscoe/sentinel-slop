@@ -2,7 +2,6 @@
 
 namespace App\Providers;
 
-use App\Scanning\Preflight\PreflightChecker;
 use App\Services\GitHub\GitHubAppApi;
 use App\Services\GitHub\GitHubAppJwt;
 use App\Services\GitHub\KnpGitHubAppApi;
@@ -58,9 +57,6 @@ class AppServiceProvider extends ServiceProvider
 
             return new ScanWorkspaceFactory(rtrim($base, '/'));
         });
-
-        // Security analysers (Semgrep malware rules, gitleaks) are registered here in phase 3.
-        $this->app->bind(PreflightChecker::class, fn (): PreflightChecker => new PreflightChecker([]));
     }
 
     private static function isAbsolutePath(string $path): bool

@@ -1,0 +1,6 @@
+rules:
+  - id: nothing
+    languages: [php]
+    severity: INFO
+    message: nothing
+    pattern: nothing_at_all_matches_this()

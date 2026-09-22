@@ -1,0 +1,1 @@
+# Sentinel Slop: intentionally empty. Passed with --gitleaks-ignore-path so the scanned repo cannot suppress findings.

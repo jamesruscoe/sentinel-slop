@@ -1,0 +1,1 @@
+<div>{{ $order->total() }}</div>

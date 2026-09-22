@@ -1,0 +1,44 @@
+# Sentinel Slop's bundled PHPStan config for scanning user repositories.
+# Passed with -c; the repository's own phpstan.neon is never read.
+# No bootstrapFiles, no Larastan, no autoloader: the repo's vendor directory
+# is never downloaded, so unknown-class errors are ignored by identifier.
+parameters:
+    level: 5
+    tmpDir: %currentWorkingDirectory%/tmp
+    reportUnmatchedIgnoredErrors: false
+    treatPhpDocTypesAsCertain: false
+    fileExtensions:
+        - php
+    excludePaths:
+        analyseAndScan:
+            - '*.blade.php'
+            - '*/vendor/*'
+            - '*/node_modules/*'
+    parallel:
+        maximumNumberOfProcesses: 2
+    ignoreErrors:
+        # Symbols that live in uninstalled dependencies.
+        - identifier: class.notFound
+        - identifier: interface.notFound
+        - identifier: trait.notFound
+        - identifier: enum.notFound
+        - identifier: function.notFound
+        - identifier: constant.notFound
+        - identifier: attribute.notFound
+        - identifier: class.nameCase
+        # Members resolved through unknown parents (Eloquent models, controllers, etc.).
+        - identifier: method.notFound
+        - identifier: staticMethod.notFound
+        - identifier: property.notFound
+        - identifier: classConstant.notFound
+        - identifier: method.nonObject
+        - identifier: property.nonObject
+        - identifier: staticMethod.nonObject
+        - identifier: offsetAccess.nonOffsetAccessible
+        - identifier: argument.unknown
+        # Documentation-level nits that do not indicate slop.
+        - identifier: missingType.iterableValue
+        - identifier: missingType.generics
+        - identifier: missingType.parameter
+        - identifier: missingType.return
+        - identifier: missingType.property

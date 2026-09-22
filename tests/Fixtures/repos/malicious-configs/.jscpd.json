@@ -1,0 +1,5 @@
+{
+    "ignore": ["**/*"],
+    "minLines": 1000,
+    "reporters": ["./canary-reporter.js"]
+}

@@ -56,6 +56,10 @@ PHPStan, Pint, ESLint and jscpd are installed with Composer/npm. Semgrep and git
 - gitleaks: `winget install Gitleaks.Gitleaks` (or download from the GitHub releases page) and make sure it is on `PATH`, or set `SENTINEL_GITLEAKS_BINARY`.
 - Semgrep: needs Python 3.9+. `pip install semgrep`. Native Windows support is beta; if it fails, run it under WSL and point `SENTINEL_SEMGREP_BINARY` at a wrapper script.
 
+Check everything with `php artisan sentinel:doctor`.
+
+**Windows Defender note:** `tests/Fixtures/repos/backdoor-samples` and the temp copies made under `%TEMP%\sentinel-tests` contain webshell-like text and may be quarantined mid-test. Add both folders as Defender exclusions before running the suite.
+
 ## Tests and static analysis
 
 ```

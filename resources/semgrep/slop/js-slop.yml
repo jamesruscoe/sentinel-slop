@@ -1,0 +1,98 @@
+# Sentinel Slop bundled rules: AI-slop patterns in JavaScript/TypeScript.
+# PHP equivalents are implemented with nikic/php-parser in App\Scanning\Heuristics.
+rules:
+  - id: sentinel.slop.js.empty-catch
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Empty catch block swallows the error; handle it, rethrow it, or document why it is safe to ignore"
+    metadata:
+      sentinel_category: error_handling
+    pattern-either:
+      - pattern: |
+          try { ... } catch ($E) { }
+      - pattern: |
+          try { ... } catch { }
+
+  - id: sentinel.slop.js.catch-only-logs
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Catch block only logs and continues; the failure is silently swallowed"
+    metadata:
+      sentinel_category: error_handling
+    pattern-either:
+      - pattern: |
+          try { ... } catch ($E) { console.$M(...); }
+      - pattern: |
+          try { ... } catch ($E) { $LOG.$M(...); }
+      - pattern: |
+          try { ... } catch ($E) { console.$M(...); return $R; }
+      - pattern: |
+          try { ... } catch ($E) { console.$M(...); return; }
+
+  - id: sentinel.slop.js.promise-catch-only-logs
+    languages: [javascript, typescript]
+    severity: INFO
+    message: "Promise rejection is only logged; callers never learn the operation failed"
+    metadata:
+      sentinel_category: error_handling
+    pattern-either:
+      - pattern: $P.catch(($E) => console.$M(...))
+      - pattern: $P.catch(($E) => { console.$M(...); })
+      - pattern: $P.catch(console.error)
+
+  - id: sentinel.slop.js.not-implemented-stub
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Stub that throws 'not implemented'; the feature was never finished"
+    metadata:
+      sentinel_category: placeholder
+    patterns:
+      - pattern-either:
+          - pattern: throw new Error("$MSG")
+          - pattern: throw Error("$MSG")
+      - metavariable-regex:
+          metavariable: $MSG
+          regex: (?i)not (yet )?implemented|todo|implement me|coming soon
+
+  - id: sentinel.slop.js.placeholder-data
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Hard-coded placeholder data (example names/emails/lorem ipsum) in application code"
+    metadata:
+      sentinel_category: placeholder
+    paths:
+      exclude:
+        - "**/*.test.*"
+        - "**/*.spec.*"
+        - "**/__tests__/**"
+        - "**/__mocks__/**"
+        - "**/test/**"
+        - "**/tests/**"
+        - "**/fixtures/**"
+        - "**/stories/**"
+        - "**/*.stories.*"
+        - "**/seed*/**"
+        - "**/mock*/**"
+    pattern-regex: (?i)(lorem ipsum|john\.?doe|jane\.?doe|@example\.com|foo@bar|dummy data|placeholder data|sample data|123-456-7890|555-0100)
+
+  - id: sentinel.slop.js.console-log-todo
+    languages: [javascript, typescript]
+    severity: INFO
+    message: "console.log used as a placeholder for real behaviour"
+    metadata:
+      sentinel_category: placeholder
+    patterns:
+      - pattern: console.log("$MSG", ...)
+      - metavariable-regex:
+          metavariable: $MSG
+          regex: (?i)^(todo|fixme|implement|here|test|debug|works|hello world)
+
+  - id: sentinel.slop.js.any-cast-chain
+    languages: [typescript]
+    severity: INFO
+    message: "Casting through any hides type errors instead of fixing them"
+    metadata:
+      sentinel_category: type_safety
+    pattern-either:
+      - pattern: ($X as any) as $T
+      - pattern: ($X as unknown) as any
