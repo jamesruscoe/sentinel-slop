@@ -50,6 +50,8 @@ return [
         'storage/framework',
         'public/build',
         'public/hot',
+        // Sentinel Slop's own throwaway test key pair. Never a real credential.
+        'tests/Fixtures/keys',
     ],
 
     /*
@@ -137,6 +139,8 @@ return [
     'synthesis' => [
         'provider' => env('SENTINEL_LLM_PROVIDER', 'anthropic'),
         'model' => env('SENTINEL_LLM_MODEL', 'claude-sonnet-5'),
+        // Models a user may pick per scan. Comma-separated in SENTINEL_LLM_MODELS; the default model is always allowed.
+        'models' => array_values(array_unique(array_filter(array_map('trim', explode(',', (string) env('SENTINEL_LLM_MODELS', env('SENTINEL_LLM_MODEL', 'claude-sonnet-5'))))))),
         'token_budget' => (int) env('SENTINEL_LLM_TOKEN_BUDGET', 24000),
         'max_snippet_lines' => 6,
         'target_editors' => ['claude_code', 'cursor'],

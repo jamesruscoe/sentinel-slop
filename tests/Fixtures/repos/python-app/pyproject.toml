@@ -1,0 +1,17 @@
+[project]
+name = "python-app"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "django>=4.2",
+    "requests",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "mypy"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

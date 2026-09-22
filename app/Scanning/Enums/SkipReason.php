@@ -16,6 +16,7 @@ enum SkipReason: string
     case Oversized = 'oversized';
     case PathEscape = 'path_escape';
     case UnsupportedMode = 'unsupported_mode';
+    case NameCollision = 'name_collision';
 
     public function label(): string
     {
@@ -30,6 +31,7 @@ enum SkipReason: string
             self::Oversized => 'Exceeds single-file size limit',
             self::PathEscape => 'Path escapes the scan directory',
             self::UnsupportedMode => 'Unsupported git object mode',
+            self::NameCollision => 'Filename collides with another on a case-insensitive filesystem',
         };
     }
 }

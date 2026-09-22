@@ -31,8 +31,16 @@ app/
   Policies/         RepositoryPolicy, ScanPolicy — users only see repos their installations cover
   Services/GitHub/  GitHubAppJwt, GitHubAppApi (+Knp adapter), InstallationTokenService,
                     InstallationSyncService, WebhookHandler, WebhookSignatureVerifier
-  Jobs/Scan/        (phase 2+) the chained pipeline jobs, all on the `scans` queue
+  Jobs/Scan/        ScanStageJob base + one job per stage, all on the `scans` queue
+  Services/Scanning/ ScanDispatcher, ScanPipeline, ScanFailureHandler, ScanWorkspaceFactory, ContentSourceResolver
   Scanning/         framework-free scanning core (see below)
+    Contracts/      Analyser, Heuristic, ProcessRunner, GitHubContentSource, RepositoryFetcher
+    Data/           Finding, FindingCollection, Stack, SkippedFile, FetchResult, PreflightResult, Process*, limits
+    Fetch/          GitHubTreeFetcher, ScanWorkspace, KnpGitHubContentSource
+    Preflight/      PreflightChecker, BinaryDetector, GeneratedFileDetector
+    Detect/         StackDetector + manifest parsers (data only) + ToolingDetector
+    Normalise/      FindingNormaliser, FindingDeduplicator, SecretRedactor
+    Support/        PathGuard, PathMatcher, FileWalker
 config/sentinel.php limits, skip lists, tool paths, score weights, synthesis settings
 resources/analyser-configs/  bundled tool configs (the ONLY configs analysers ever load)
 resources/semgrep/           bundled Semgrep rules (malware/, quality/, slop/)
@@ -49,7 +57,13 @@ resources/prompts/           Blade templates for LLM prompts and rules files
 
 ### Scan pipeline
 
-`ScanStatus` order: queued → fetching → preflight → detecting → analysing → heuristics → normalising → scoring → synthesising → complete, or failed. One job per stage, chained on the `scans` queue, each updating status and broadcasting `ScanProgressed` on private channel `scans.{uuid}`. Raw tool output stays in the scan's temp `work/` dir; only normalised findings reach the database.
+`ScanStatus` order: queued → fetching → preflight → detecting → analysing → heuristics → normalising → scoring → synthesising → complete, or failed. One job per stage, chained on the `scans` queue via `ScanDispatcher`, each updating status and broadcasting `ScanProgressed` on private channel `scans.{uuid}`. The chain's `catch` hands off to `ScanFailureHandler` (user-safe message, workspace deleted). `CleanupScan` runs before `CompleteScan` so a scan is only complete once its files are gone.
+
+Stages pass data through JSON artifacts in the workspace's `work/` dir (`fetch`, `preflight`, `stack`, `findings/<tool>`, `findings-normalised`); only normalised findings reach the database. Workspace layout: `{scan_storage_path}/{uuid}/repo` (files) and `/work` (artifacts).
+
+Fetch rules: tree entries with mode 120000 (symlink) or type commit (submodule) are recorded as skipped and never written; only modes 100644/100755 are downloaded; paths go through `PathGuard` (no `..`, absolute, backslash, NUL, `.git`); skipped directories are not downloaded at all; limits are checked against tree sizes before any blob is fetched and again on the real bytes. Preflight fails the scan on symlinks, path escapes or limits, and deletes binaries (by content), executables (magic bytes), generated/minified files and dependency dirs from the workspace, recording each in `scans.skipped_files` (`{total, counts, entries[≤500], truncated}`).
+
+Per-scan LLM model: `scans.llm_model` (validated against `sentinel.synthesis.models`); null means the configured default. `php artisan sentinel:scan owner/name --model=...` queues a scan from the CLI.
 
 ### GitHub integration
 
@@ -98,7 +112,7 @@ Site: http://sentinel-slop.test (junction in Herd's Sites directory points at th
 ## Build phases
 
 1. Foundation (done): Herd, packages, GitHub login, GitHub App install + webhooks, models, migrations, config, this file.
-2. Scanning core: `App\Scanning` interfaces/DTOs, FetchRepository, PreflightCheck, stack detection, normalisation, cleanup, fixture repos.
+2. Scanning core (done): `App\Scanning` interfaces/DTOs, FetchRepository, PreflightCheck, stack detection, normalisation, cleanup, fixture repos in `tests/Fixtures/repos/` (hand-written stubs only; vendor/node_modules there are gitignored and created at test time).
 3. Analysers: ProcessRunner, bundled configs, tool runners, slop heuristics, malicious-config tests.
 4. Synthesis: rulesets, slop score, redaction, Prism, prompt and rules-file generation.
 5. UI: landing, dashboard, live scan page, results, history.

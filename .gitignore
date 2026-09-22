@@ -36,3 +36,7 @@ Thumbs.db
 
 # Test-only key pair (never a real credential)
 !/tests/Fixtures/keys/*.pem
+
+# Fixture repos are hand-written stubs. Never commit real installed dependencies.
+/tests/Fixtures/repos/**/vendor/
+/tests/Fixtures/repos/**/node_modules/

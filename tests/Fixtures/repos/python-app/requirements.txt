@@ -1,0 +1,4 @@
+# Pinned for deployment
+django==4.2.11
+requests>=2.31
+gunicorn[standard]
