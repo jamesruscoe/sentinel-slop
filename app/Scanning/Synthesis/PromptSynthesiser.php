@@ -34,7 +34,7 @@ final class PromptSynthesiser
         private readonly LlmClient $llm,
         private readonly TemplateRenderer $templates,
         private readonly SynthesisPayloadBuilder $payloads,
-        private readonly int $maxOutputTokens = 16000,
+        private readonly int $maxOutputTokens = 32000,
         private readonly int $contextWindow = 200000,
     ) {}
 

@@ -190,9 +190,10 @@ return [
         // Findings payload budget (input). The synthesiser also caps it so that
         // system prompt + findings + max_output_tokens always fit in context_window.
         'token_budget' => (int) env('SENTINEL_LLM_TOKEN_BUDGET', 24000),
-        'max_output_tokens' => (int) env('SENTINEL_LLM_MAX_OUTPUT_TOKENS', 16000),
+        // A 23-finding fixture produced ~12k output tokens; the model does not reliably honour the word limit, so leave headroom.
+        'max_output_tokens' => (int) env('SENTINEL_LLM_MAX_OUTPUT_TOKENS', 32000),
         'context_window' => (int) env('SENTINEL_LLM_CONTEXT_WINDOW', 200000),
-        'timeout_seconds' => (int) env('SENTINEL_LLM_TIMEOUT', 180),
+        'timeout_seconds' => (int) env('SENTINEL_LLM_TIMEOUT', 300),
         'max_snippet_lines' => 6,
         'max_findings' => (int) env('SENTINEL_LLM_MAX_FINDINGS', 150),
         'target_editors' => ['claude_code', 'cursor'],
