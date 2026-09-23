@@ -44,7 +44,8 @@ class ScanFixtureCommand extends Command
         $installation = Installation::query()->firstOrCreate(['github_installation_id' => 0], ['user_id' => $user->id, 'account_login' => 'local', 'account_type' => 'User']);
         $repository = Repository::query()->firstOrCreate(['github_repo_id' => crc32($name)], ['installation_id' => $installation->id, 'full_name' => $name, 'default_branch' => 'main']);
 
-        config(['sentinel.queue.connection' => 'sync']);
+        // Everything runs inline, including broadcasts, and Reverb may not be up.
+        config(['sentinel.queue.connection' => 'sync', 'broadcasting.default' => 'null']);
         app()->instance(ContentSourceResolver::class, new class($directory) implements ContentSourceResolver
         {
             public function __construct(private readonly string $directory) {}

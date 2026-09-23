@@ -47,9 +47,15 @@ final class PromptSynthesiser
             'phases' => self::PHASES,
         ]);
 
-        $plan = $this->llm->plan($system, $user, $request->model);
-        $phases = $this->validatePhases($plan['phases'] ?? null);
-        $rules = $this->validateRules($plan['rules'] ?? null);
+        $sent = ['system' => $system, 'user' => $user, 'model' => $request->model];
+
+        try {
+            $plan = $this->llm->plan($system, $user, $request->model);
+            $phases = $this->validatePhases($plan['phases'] ?? null);
+            $rules = $this->validateRules($plan['rules'] ?? null);
+        } catch (SynthesisException $e) {
+            throw $e->withPayload($sent);
+        }
 
         $prompts = [];
         $rulesFiles = [];
@@ -71,7 +77,7 @@ final class PromptSynthesiser
             'included' => $payload['included'],
             'omitted' => $payload['omitted'],
             'estimated_tokens' => $payload['estimated_tokens'],
-        ], ['system' => $system, 'user' => $user, 'model' => $request->model]);
+        ], $sent);
     }
 
     /**

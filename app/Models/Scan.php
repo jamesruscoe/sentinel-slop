@@ -15,7 +15,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property ScanStatus $status
  * @property array<string, mixed>|null $detected_stack
  * @property list<array<string, mixed>>|null $skipped_files
- * @property array{system: string, user: string, model: string}|null $synthesis_payload
+ * @property array{system: string, user: string, model: string, truncated?: bool}|null $synthesis_payload
  */
 #[Fillable([
     'repository_id', 'user_id', 'status', 'commit_sha', 'slop_score', 'detected_stack',

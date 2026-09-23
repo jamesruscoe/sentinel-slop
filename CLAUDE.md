@@ -15,6 +15,8 @@ Concrete consequences:
 - Fetched files are deleted after every scan (success or failure) and a scheduled sweeper removes anything older than one hour.
 - Installation tokens are minted per scan and never logged or persisted. `App\Services\GitHub\InstallationToken` refuses to be serialised.
 - Secret values found by gitleaks are redacted before storage and before anything is sent to the LLM.
+- The LLM API key lives only in `config/prism.php` (from env). It is never on a job, model or DTO (`LlmClient` is resolved from the container inside the job, never serialised), `PrismLlmClient` rethrows provider errors without the previous exception (Guzzle chains carry the request headers) and `LlmSecretScrubber` removes every configured provider key from any message that is logged or stored. `tests/Feature/Synthesis/LlmKeyLeakTest.php` guards this.
+- Retention: `scans.synthesis_payload` contains snippets of users' code. `config/sentinel.php` → `retention.synthesis_payload` (`purge` | `truncate` | `retain`, default purge after `synthesis_payload_days` = 30) is applied daily by `sentinel:prune`. `findings.snippet` is stored with the same lifetime as the scan and is not yet covered by a retention policy (open decision).
 
 ## Stack
 

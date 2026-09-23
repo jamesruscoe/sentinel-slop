@@ -156,13 +156,29 @@ return [
     /*
     | LLM synthesis. Provider and model map straight onto Prism.
     */
+    /*
+    |--------------------------------------------------------------------------
+    | Retention
+    |--------------------------------------------------------------------------
+    | scans.synthesis_payload holds the exact prompts sent to the LLM, which
+    | include snippets of the user's code. Policy for that column once a scan
+    | is older than `days`: `purge` nulls it, `truncate` keeps the prompt
+    | headers (stack, score, category counts) but drops the findings section
+    | with the snippets, `retain` keeps it forever. Applied daily by
+    | `sentinel:prune`.
+    */
+    'retention' => [
+        'synthesis_payload' => env('SENTINEL_RETAIN_SYNTHESIS_PAYLOAD', 'purge'),
+        'synthesis_payload_days' => (int) env('SENTINEL_RETAIN_SYNTHESIS_PAYLOAD_DAYS', 30),
+    ],
+
     'synthesis' => [
         'provider' => env('SENTINEL_LLM_PROVIDER', 'anthropic'),
         'model' => env('SENTINEL_LLM_MODEL', 'claude-sonnet-5'),
         // Models a user may pick per scan. Comma-separated in SENTINEL_LLM_MODELS; the default model is always allowed.
         'models' => array_values(array_unique(array_filter(array_map('trim', explode(',', (string) env('SENTINEL_LLM_MODELS', env('SENTINEL_LLM_MODEL', 'claude-sonnet-5'))))))),
         'token_budget' => (int) env('SENTINEL_LLM_TOKEN_BUDGET', 24000),
-        'max_output_tokens' => (int) env('SENTINEL_LLM_MAX_OUTPUT_TOKENS', 8000),
+        'max_output_tokens' => (int) env('SENTINEL_LLM_MAX_OUTPUT_TOKENS', 16000),
         'timeout_seconds' => (int) env('SENTINEL_LLM_TIMEOUT', 180),
         'max_snippet_lines' => 6,
         'max_findings' => (int) env('SENTINEL_LLM_MAX_FINDINGS', 150),

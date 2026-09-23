@@ -8,11 +8,13 @@ use App\Scanning\Data\FindingCollection;
 use App\Scanning\Data\Stack;
 use App\Scanning\Enums\TargetEditor;
 use App\Scanning\Exceptions\ScanException;
+use App\Scanning\Exceptions\SynthesisException;
 use App\Scanning\Fetch\ScanWorkspace;
 use App\Scanning\Score\ScoreResult;
 use App\Scanning\Synthesis\PromptSynthesiser;
 use App\Scanning\Synthesis\RulesetLoader;
 use App\Scanning\Synthesis\SynthesisRequest;
+use App\Services\Llm\LlmSecretScrubber;
 use App\Services\Scanning\ScanWorkspaceFactory;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -55,8 +57,11 @@ class SynthesisePrompts extends ScanStageJob
         try {
             $result = app(PromptSynthesiser::class)->synthesise($request);
         } catch (Throwable $e) {
-            Log::warning('Prompt synthesis failed', ['scan' => $scan->uuid, 'exception' => get_class($e), 'message' => $e->getMessage()]);
-            $scan->forceFill(['synthesis_error' => $e instanceof ScanException ? $e->userMessage() : 'Prompt generation failed unexpectedly.'])->save();
+            Log::warning('Prompt synthesis failed', ['scan' => $scan->uuid, 'exception' => get_class($e), 'message' => LlmSecretScrubber::scrub($e->getMessage())]);
+            $scan->forceFill([
+                'synthesis_error' => $e instanceof ScanException ? $e->userMessage() : 'Prompt generation failed unexpectedly.',
+                'synthesis_payload' => $e instanceof SynthesisException ? $e->payload : null,
+            ])->save();
 
             return;
         }

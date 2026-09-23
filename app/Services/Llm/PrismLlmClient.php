@@ -36,11 +36,18 @@ final class PrismLlmClient implements LlmClient
                 ->withClientOptions(['timeout' => $this->timeoutSeconds])
                 ->asStructured();
         } catch (Throwable $e) {
-            throw new SynthesisException('LLM request failed: '.$e->getMessage(), 0, $e);
+            // No previous: a Guzzle/Prism exception chain can carry the request object (and its headers).
+            throw new SynthesisException('LLM request failed: '.LlmSecretScrubber::scrub($e->getMessage()));
         }
 
         if (! is_array($response->structured) || $response->structured === []) {
-            throw new SynthesisException('The model returned no structured output.');
+            throw new SynthesisException(sprintf(
+                'The model returned no structured output (finish reason %s, %d output tokens of %d allowed, %d characters of text).',
+                $response->finishReason->name,
+                $response->usage->completionTokens,
+                $this->maxOutputTokens,
+                strlen($response->text),
+            ));
         }
 
         return $response->structured;

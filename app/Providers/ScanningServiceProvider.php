@@ -87,7 +87,7 @@ class ScanningServiceProvider extends ServiceProvider
     {
         $this->app->bind(LlmClient::class, fn (): LlmClient => new PrismLlmClient(
             (string) config('sentinel.synthesis.provider', 'anthropic'),
-            (int) config('sentinel.synthesis.max_output_tokens', 8000),
+            (int) config('sentinel.synthesis.max_output_tokens', 16000),
             (int) config('sentinel.synthesis.timeout_seconds', 180),
         ));
 
