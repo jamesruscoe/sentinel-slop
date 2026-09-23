@@ -136,3 +136,14 @@ test('security analyser hits are reported as critical findings', function () {
         ->and($result->findings->all()[0]->severity)->toBe(Severity::Critical)
         ->and($result->findings->all()[0]->category)->toBe(FindingCategory::Malware);
 });
+
+test('lockfiles survive preflight even though they are generated and may be large', function () {
+    $workspace = workspaceFromFixture('lockfile-deps');
+    file_put_contents($workspace->repoPath().'/package-lock.json', str_pad((string) file_get_contents($workspace->repoPath().'/package-lock.json'), 600 * 1024, ' '));
+
+    $result = (new PreflightChecker)->check($workspace, preflightConfig(['maxLockfileBytes' => 8 * 1024 * 1024]));
+
+    expect($result->files)->toContain('composer.lock', 'package-lock.json')
+        ->and(reasonsByPath($result->skipped))->toBe([])
+        ->and(file_get_contents($workspace->repoPath().'/composer.lock'))->toContain('@generated');
+});

@@ -106,6 +106,12 @@ final class PreflightChecker
             return [$binary, null];
         }
 
+        // Lockfiles are generated (composer.lock even says "@generated" in its header) but they are the
+        // only exact record of what is installed, so they are kept and read as data, never as code.
+        if (DependencyIndex::isLockfile($entry['path'])) {
+            return null;
+        }
+
         $generated = GeneratedFileDetector::detect($entry['path'], $entry['absolute'], $entry['size'], $config->generatedFilePatterns);
         if ($generated !== null) {
             return [$generated, null];

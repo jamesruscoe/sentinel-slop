@@ -1,5 +1,10 @@
 {
-    "_readme": ["Hand-written fixture: package names deliberately differ from their namespaces."],
+    "_readme": [
+        "This file locks the dependencies of your project to a known state",
+        "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
+        "This file is @generated automatically",
+        "Hand-written fixture: package names deliberately differ from their namespaces."
+    ],
     "packages": [
         {"name": "laravel/framework", "version": "v12.0.0", "autoload": {"psr-4": {"Illuminate\\": "src/Illuminate/"}}},
         {"name": "inertiajs/inertia-laravel", "version": "v2.0.0", "autoload": {"psr-4": {"Inertia\\": "src/"}}},
