@@ -51,3 +51,14 @@ test('phpstan drops non-ignorable unknown-symbol errors when the symbol resolves
     expect($identifiers)->not->toContain('class.notFound', 'interface.notFound', 'trait.notFound', 'class.noParent')
         ->and($messages)->not->toContain('Inertia\Middleware', 'Spatie\MediaLibrary', 'Tighten\Ziggy');
 });
+
+test('the same errors are kept when the repository is not a Laravel application', function () {
+    $workspace = temporaryWorkspace();
+    file_put_contents($workspace->repoPath().'/composer.json', '{"require": {"php": "^8.2"}, "autoload": {"psr-4": {"App\\\\": "app/"}}}');
+    @mkdir($workspace->repoPath().'/app');
+    file_put_contents($workspace->repoPath().'/app/Thing.php', "<?php\n\nnamespace App;\n\nclass Thing\n{\n    public function total(): int\n    {\n        return '0';\n    }\n\n    public function name(?Thing \$other): string\n    {\n        \$self = \$this;\n\n        return \$self?->label ?? 'x';\n    }\n\n    public string \$label = 'y';\n}\n");
+
+    $identifiers = array_map(fn ($f) => (string) $f->ruleId, app(PhpStanAnalyser::class)->run($workspace->repoPath())->all());
+
+    expect($identifiers)->toContain('return.type')->toContain('nullsafe.neverNull');
+});

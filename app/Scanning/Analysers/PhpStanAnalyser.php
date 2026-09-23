@@ -47,6 +47,7 @@ final class PhpStanAnalyser extends ProcessAnalyser
         $report = $this->decodeJson($result->stdout, 'JSON output'.($result->exitCode > 1 ? " (exit {$result->exitCode}, stderr: ".substr($result->stderr, 0, 200).')' : ''));
         $findings = new FindingCollection;
         $index = DependencyIndex::build($path);
+        $laravel = $index->composerDeclares('laravel/framework') || $index->resolvePhp('Illuminate\Database\Eloquent\Model') !== null;
         /** @var array<string, true> $unknownButInstalledParents  files whose parent class lives in an installed package */
         $unknownButInstalledParents = [];
 
@@ -70,6 +71,9 @@ final class PhpStanAnalyser extends ProcessAnalyser
                 if ($identifier === 'class.noParent' && isset($unknownButInstalledParents[$relative])) {
                     continue;
                 }
+                if ($laravel && self::isLaravelMisreading($identifier, $text)) {
+                    continue;
+                }
 
                 [$category, $severity] = CategoryMapper::phpstan($identifier !== '' ? $identifier : null);
 
@@ -83,6 +87,25 @@ final class PhpStanAnalyser extends ProcessAnalyser
         }
 
         return $findings;
+    }
+
+    /**
+     * Plain PHPStan without Larastan misreads Eloquent: it does not know that
+     * model properties and relations can be null (so `$user?->name ?? ''` is
+     * "unnecessary"), that relations and scopes return builders it cannot
+     * type (so `careLogs(): HasMany` "returns Query\Builder"), or that
+     * `Dog::create()` returns a Dog rather than Model. Acting on those would
+     * make the user's code worse, so they are dropped for Laravel stacks and
+     * kept for every other PHP codebase.
+     */
+    public static function isLaravelMisreading(string $identifier, string $message): bool
+    {
+        if ($identifier === 'nullsafe.neverNull') {
+            return true;
+        }
+
+        return in_array($identifier, ['return.type', 'return.phpDocType', 'argument.type', 'argument.unresolvableType'], true)
+            && str_contains($message, 'Illuminate'.chr(92));
     }
 
     private static function isUnknownSymbolError(string $identifier): bool

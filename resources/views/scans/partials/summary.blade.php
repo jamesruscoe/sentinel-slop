@@ -11,9 +11,9 @@
             @elseif ($scan->slop_score >= 80)
                 Light problems only. Clean code scores 100.
             @elseif ($scan->slop_score >= 50)
-                Moderate problems. The phased prompts below will get this above 80.
+                Moderate problems. Work through the phased prompts below in order, then scan again to measure the change.
             @else
-                Dense problems. Work through the phases in order.
+                Dense problems. Work through the phased prompts below in order, then scan again to measure the change.
             @endif
         </p>
     </div>
