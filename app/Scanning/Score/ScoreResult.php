@@ -17,6 +17,7 @@ final class ScoreResult
         public readonly int $suppressionPenalty,
         public readonly bool $criticalCapApplied,
         public readonly array $bySeverity,
+        public readonly int $lowPenalty = 0,
     ) {}
 
     /**
@@ -30,6 +31,7 @@ final class ScoreResult
             'penalty' => $this->penalty,
             'density' => $this->density,
             'suppression_penalty' => $this->suppressionPenalty,
+            'low_penalty' => $this->lowPenalty,
             'critical_cap_applied' => $this->criticalCapApplied,
             'by_severity' => $this->bySeverity,
         ];
@@ -48,6 +50,7 @@ final class ScoreResult
             (int) ($data['suppression_penalty'] ?? 0),
             (bool) ($data['critical_cap_applied'] ?? false),
             array_map('intval', (array) ($data['by_severity'] ?? [])),
+            (int) ($data['low_penalty'] ?? 0),
         );
     }
 }

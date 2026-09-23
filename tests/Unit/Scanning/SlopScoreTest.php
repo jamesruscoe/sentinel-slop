@@ -15,8 +15,10 @@ function calculator(): SlopScoreCalculator
 {
     return SlopScoreCalculator::fromConfig([
         'weights' => ['critical' => 25, 'high' => 10, 'medium' => 4, 'low' => 1, 'info' => 0],
-        'curve' => ['scale' => 90, 'exponent' => 2.1],
+        'curve' => ['scale' => 65, 'exponent' => 1.4],
         'critical_cap' => 40,
+        'low_points' => 0.1,
+        'low_cap' => 5,
         'suppression_weight' => 2.0,
         'suppression_cap' => 20,
     ]);
@@ -40,17 +42,34 @@ test('a clean repository scores 100', function () {
     expect($result->score)->toBe(100)->and($result->penalty)->toBe(0)->and($result->criticalCapApplied)->toBeFalse();
 });
 
-test('the curve keeps light problems high and pushes dense problems below 30', function (array $counts, int $lines, int $expected) {
+test('the score is driven by medium-and-above findings, with size giving a sqrt allowance', function (array $counts, int $lines, int $expected) {
     expect(calculator()->calculate(findingsOf($counts), $lines)->score)->toBe($expected);
 })->with([
     'two low findings in 2k lines' => [['low' => 2], 2000, 100],
-    'a few mediums in 5k lines' => [['medium' => 3, 'low' => 4], 5000, 100],
-    'one high and five mediums in 3k lines' => [['high' => 1, 'medium' => 5], 3000, 99],
-    '800 lines with 10 medium findings' => [['medium' => 10], 800, 75],
-    '800 lines with 10 medium and 5 low' => [['medium' => 10, 'low' => 5], 800, 69],
-    'sloppy-laravel shape: 1 critical, 2 high, 9 medium, 11 low in 878 lines' => [['critical' => 1, 'high' => 2, 'medium' => 9, 'low' => 11], 878, 25],
-    'dense: 20 high in 500 lines' => [['high' => 20], 500, 0],
+    'one medium in 5k lines' => [['medium' => 1], 5000, 99],
+    'three mediums in 1k lines' => [['medium' => 3], 1000, 91],
+    'one high and five mediums in 3k lines' => [['high' => 1, 'medium' => 5], 3000, 85],
+    '800 lines with 10 medium findings' => [['medium' => 10], 800, 60],
+    'dog-kennel shape: 49 medium, 181 low in 21.2k lines' => [['medium' => 49, 'low' => 181], 21233, 53],
+    'the same 49 mediums in 800 lines' => [['medium' => 49], 800, 1],
+    'sloppy-laravel shape without the secret: 2 high, 10 medium, 11 low in 878 lines' => [['high' => 2, 'medium' => 10, 'low' => 11], 878, 40],
+    'dense: 20 high in 500 lines' => [['high' => 20], 500, 1],
 ]);
+
+test('low findings cost a little and never more than the cap, however many there are', function () {
+    $tenLows = calculator()->calculate(findingsOf(['low' => 10]), 1000)->score;
+    $thousandLows = calculator()->calculate(findingsOf(['low' => 1000]), 1000);
+
+    expect($tenLows)->toBe(99)
+        ->and($thousandLows->score)->toBe(95)
+        ->and($thousandLows->lowPenalty)->toBe(5)
+        ->and($thousandLows->penalty)->toBe(0);
+});
+
+test('a large repository is not given a free pass: 49 mediums always hurt', function () {
+    expect(calculator()->calculate(findingsOf(['medium' => 49]), 21233)->score)->toBeLessThan(65)
+        ->and(calculator()->calculate(findingsOf(['medium' => 49]), 200000)->score)->toBeLessThan(90);
+});
 
 test('the score is monotonic in density', function () {
     $previous = 101;
@@ -84,7 +103,7 @@ test('score results round-trip and config curve values are honoured', function (
     $linear = SlopScoreCalculator::fromConfig(['weights' => ['high' => 50], 'curve' => ['scale' => 1000, 'exponent' => 1], 'critical_cap' => 10]);
     $result = $linear->calculate(new FindingCollection([scoreFinding('high')]), 1000);
 
-    // density 50, scale 1000, exponent 1 => 100 * exp(-0.05) = 95
+    // density 50 (sqrt(1 KLOC) = 1), scale 1000, exponent 1 => 100 * exp(-0.05) = 95
     expect($result->score)->toBe(95)
         ->and(ScoreResult::fromArray($result->toArray())->toArray())->toBe($result->toArray());
 });

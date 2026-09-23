@@ -12,15 +12,23 @@ use SensitiveParameter;
  * Makes sure secret values never reach the database or the LLM. Findings in
  * the Secrets category keep only file, line and rule/type: the snippet is
  * dropped and the message is scrubbed. Everything else is scrubbed by
- * context (secret-ish key names) and by shape (known token prefixes, or
- * long mixed-case-with-digits / hex strings), so identifiers, paths and
- * class names in snippets survive.
+ * context (a VALUE assigned to a secret-ish key) and by shape (known token
+ * prefixes, or long mixed-case-with-digits / hex strings). Identifiers,
+ * method names, class members and paths are never touched: `Auth::login(`,
+ * `$user->password` and `config('services.x.token')` all survive.
  */
 final class SecretRedactor
 {
     public const PLACEHOLDER = '[REDACTED]';
 
-    private const CONTEXT = '/((?:api[_-]?key|secret|token|password|passwd|pwd|auth(?:orization)?|bearer|credential|private[_-]?key|client[_-]?secret)\\s*["\\\']?\\s*(?:=>|=|:)\\s*["\\\']?\\s*(?:bearer\\s+|basic\\s+)?)([^"\\\'\\s,;)]{6,})/i';
+    private const KEYS = '(?:api[_-]?key|apikey|secret|token|password|passwd|pwd|authorization|bearer|credential|private[_-]?key|client[_-]?secret|access[_-]?key)';
+
+    /**
+     * A secret-ish key (as a whole word, not a `::` or `->` member access target on the right)
+     * followed by an assignment/pair delimiter (`=`, `=>`, `:` but not `::`, `==`) and then a
+     * value: quoted (captured without quotes) or bare (not a variable, not a call).
+     */
+    private const CONTEXT = '/(?<!\w)(?<key>'.self::KEYS.')(?<between>\s*["\']?\s*(?:=>|=(?!=)|:(?!:))\s*(?:bearer\s+|basic\s+)?)(?:(?<q>["\'])(?<quoted>[^"\']{6,})\k<q>|(?<bare>(?![$])[^"\'\s,;:)(]{6,})(?![\w(]))/i';
 
     private const PREFIXES = '/\b(?:sk-[A-Za-z0-9_-]{16,}|(?:sk|rk|pk)_(?:live|test|prod)_[A-Za-z0-9]{10,}|gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[A-Z0-9]{16}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[A-Za-z0-9_-]{30,}|ya29\.[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{5,}\.?[A-Za-z0-9_-]*)/';
 
@@ -56,7 +64,12 @@ final class SecretRedactor
      */
     public static function scrub(string $text): string
     {
-        $text = preg_replace(self::CONTEXT, '$1'.self::PLACEHOLDER, $text) ?? $text;
+        $text = preg_replace_callback(self::CONTEXT, function (array $m): string {
+            $quoted = ($m['q'] ?? '') !== '';
+
+            return $m['key'].$m['between'].($quoted ? $m['q'].self::PLACEHOLDER.$m['q'] : self::PLACEHOLDER);
+        }, $text) ?? $text;
+
         $text = preg_replace(self::PREFIXES, self::PLACEHOLDER, $text) ?? $text;
 
         return preg_replace_callback(self::TOKEN, fn (array $m) => self::looksLikeSecret($m[0]) ? self::PLACEHOLDER : $m[0], $text) ?? $text;

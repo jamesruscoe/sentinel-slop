@@ -25,7 +25,7 @@ final class PrismLlmClient implements LlmClient
     public function __construct(
         private readonly string $provider,
         private readonly int $maxOutputTokens = 32000,
-        private readonly int $timeoutSeconds = 180,
+        private readonly int $timeoutSeconds = 600,
     ) {}
 
     public function plan(string $systemPrompt, string $userPrompt, string $model): LlmResponse

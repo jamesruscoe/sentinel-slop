@@ -77,7 +77,7 @@ test('an incomplete plan is rejected rather than stored', function () {
 
 test('the findings payload is capped so the reply always fits the context window, and impossible budgets are refused up front', function () {
     $llm = new FakeLlmClient(FakeLlmClient::samplePlan());
-    $findings = new FindingCollection(array_map(fn (int $i) => Finding::fromArray(['tool' => 'x', 'rule_id' => 'r', 'category' => 'style', 'severity' => 'low', 'file_path' => "f{$i}.php", 'line' => $i, 'message' => str_repeat('word ', 60)]), range(1, 200)));
+    $findings = new FindingCollection(array_map(fn (int $i) => Finding::fromArray(['tool' => 'x', 'rule_id' => "r{$i}", 'category' => 'style', 'severity' => 'low', 'file_path' => "f{$i}.php", 'line' => $i, 'message' => str_repeat('word ', 60)]), range(1, 200)));
     $request = new SynthesisRequest('acme/app', new Stack(['PHP' => 1]), synthesisRequest()->score, $findings, [], [TargetEditor::ClaudeCode], 'm');
 
     // 200 findings of ~100 tokens each need ~20k tokens; a 30k window minus 16k reply minus the system prompt leaves room for only a fraction.

@@ -60,7 +60,7 @@ final class PlaceholderCodeHeuristic implements Heuristic
             }
 
             if ($isPhp) {
-                $this->phpStubs($file, $findings);
+                $this->phpStubs($file, $lines, $findings);
             }
         }
 
@@ -69,8 +69,9 @@ final class PlaceholderCodeHeuristic implements Heuristic
 
     /**
      * @param  array{path: string, absolute: string, size: int}  $file
+     * @param  list<string>  $lines
      */
-    private function phpStubs(array $file, FindingCollection $findings): void
+    private function phpStubs(array $file, array $lines, FindingCollection $findings): void
     {
         $ast = PhpSource::parse($file['absolute']);
         if ($ast === null) {
@@ -93,11 +94,51 @@ final class PlaceholderCodeHeuristic implements Heuristic
                 continue;
             }
 
-            if ($statements === [] && $function instanceof ClassMethod && ! $function->isAbstract() && $name !== '__construct' && $function->params === [] && $this->hasTodoComment($function)) {
-                $findings->add(new Finding($this->name(), 'empty-stub', FindingCategory::Placeholder, Severity::Low, $file['path'], $function->getStartLine(),
-                    "{$name}() has an empty body and a TODO."));
+            // A method whose body is empty or a single trivial return, with a TODO on or inside it,
+            // does not do what its name claims: that is unimplemented code, not a style note.
+            if ($this->isTrivialBody($statements) && $function instanceof ClassMethod && ! $function->isAbstract() && $name !== '__construct'
+                && ($this->hasTodoComment($function) || $this->hasTodoWithin($lines, $function->getStartLine(), $function->getEndLine()))) {
+                $findings->add(new Finding($this->name(), 'unimplemented-method', FindingCategory::Placeholder, Severity::Medium, $file['path'], $function->getStartLine(),
+                    "{$name}() is unimplemented: its body is ".($statements === [] ? 'empty' : 'a placeholder return').' and carries a TODO. Callers get nothing useful back.'));
             }
         }
+    }
+
+    /**
+     * Empty, or exactly one `return` of nothing / a literal / null / an empty array.
+     *
+     * @param  list<Node\Stmt>  $statements
+     */
+    private function isTrivialBody(array $statements): bool
+    {
+        if ($statements === []) {
+            return true;
+        }
+
+        if (count($statements) !== 1 || ! $statements[0] instanceof Node\Stmt\Return_) {
+            return false;
+        }
+
+        $expr = $statements[0]->expr;
+
+        return $expr === null
+            || $expr instanceof Node\Scalar
+            || $expr instanceof Node\Expr\ConstFetch
+            || ($expr instanceof Node\Expr\Array_ && $expr->items === []);
+    }
+
+    /**
+     * @param  list<string>  $lines
+     */
+    private function hasTodoWithin(array $lines, int $start, int $end): bool
+    {
+        for ($i = max(0, $start - 1); $i < min(count($lines), $end); $i++) {
+            if (preg_match(self::MARKER, $lines[$i]) === 1 && preg_match('~(//|#|/\*|\*)~', $lines[$i]) === 1) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function isNotImplementedThrow(Node\Expr $expr): bool

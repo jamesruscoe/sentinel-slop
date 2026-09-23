@@ -19,7 +19,7 @@ test('the payload lists findings most severe first and reports category counts',
         payloadFinding('medium', 'b.php'),
     ]));
 
-    expect($result['included'])->toBe(3)->and($result['omitted'])->toBe(0)
+    expect($result['included'])->toBe(3)->and($result['omitted'])->toBe(0)->and($result['total'])->toBe(3)->and($result['aggregated'])->toBe(0)
         ->and($result['text'])->toStartWith('- [critical] a.php:3 (phpstan/r) type_safety: msg')
         ->and($result['text'])->toContain("  line1\n  line2\n  ```")->not->toContain('line3')
         ->and($result['by_category'])->toBe(['type_safety' => 3]);
@@ -31,8 +31,8 @@ test('findings are trimmed to the token budget and the max count, keeping the mo
         payloadFinding('high', 'high.php'),
     ]);
 
-    $budgeted = (new SynthesisPayloadBuilder(tokenBudget: 800, maxFindings: 150))->build($findings, maxTokens: 700);
-    $counted = (new SynthesisPayloadBuilder(tokenBudget: 100000, maxFindings: 5))->build($findings);
+    $budgeted = (new SynthesisPayloadBuilder(tokenBudget: 800, maxFindings: 150, aggregateThreshold: 1000))->build($findings, maxTokens: 700);
+    $counted = (new SynthesisPayloadBuilder(tokenBudget: 100000, maxFindings: 5, aggregateThreshold: 1000))->build($findings);
 
     expect($budgeted['text'])->toStartWith('- [high] high.php')
         ->and($budgeted['included'])->toBeLessThan(21)

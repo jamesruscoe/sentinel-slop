@@ -88,7 +88,7 @@ class ScanningServiceProvider extends ServiceProvider
         $this->app->bind(LlmClient::class, fn (): LlmClient => new PrismLlmClient(
             (string) config('sentinel.synthesis.provider', 'anthropic'),
             (int) config('sentinel.synthesis.max_output_tokens', 32000),
-            (int) config('sentinel.synthesis.timeout_seconds', 180),
+            (int) config('sentinel.synthesis.timeout_seconds', 600),
         ));
 
         $this->app->bind(TemplateRenderer::class, fn (): TemplateRenderer => new BladeTemplateRenderer((string) config('sentinel.paths.prompts')));
@@ -99,6 +99,7 @@ class ScanningServiceProvider extends ServiceProvider
             (int) config('sentinel.synthesis.token_budget', 24000),
             (int) config('sentinel.synthesis.max_findings', 150),
             (int) config('sentinel.synthesis.max_snippet_lines', 6),
+            (int) config('sentinel.synthesis.aggregate_threshold', 5),
         ));
 
         $this->app->bind(PromptSynthesiser::class, fn (Application $app): PromptSynthesiser => new PromptSynthesiser(

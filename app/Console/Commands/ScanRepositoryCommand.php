@@ -9,7 +9,7 @@ use Throwable;
 
 class ScanRepositoryCommand extends Command
 {
-    protected $signature = 'sentinel:scan {repository : Full name, e.g. owner/name} {--model= : Prism model id for prompt synthesis}';
+    protected $signature = 'sentinel:scan {repository : Full name, e.g. owner/name} {--model= : Prism model id for prompt synthesis} {--sync : Run the whole pipeline in this process instead of queueing it (development)}';
 
     protected $description = 'Queue a scan of a repository the GitHub App is installed on';
 
@@ -25,6 +25,15 @@ class ScanRepositoryCommand extends Command
         }
 
         $model = $this->option('model');
+
+        if ($this->option('sync')) {
+            if (app()->isProduction()) {
+                $this->error('--sync is not available in production.');
+
+                return self::FAILURE;
+            }
+            config(['sentinel.queue.connection' => 'sync', 'broadcasting.default' => 'null']);
+        }
 
         try {
             $scan = $dispatcher->dispatch($repository, null, is_string($model) && $model !== '' ? $model : null);

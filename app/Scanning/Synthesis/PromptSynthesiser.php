@@ -58,6 +58,8 @@ final class PromptSynthesiser
             'findings' => $payload['text'],
             'included' => $payload['included'],
             'omitted' => $payload['omitted'],
+            'aggregated' => $payload['aggregated'],
+            'total' => $payload['total'],
             'byCategory' => $payload['by_category'],
             'suppressions' => $request->suppressions,
             'phases' => self::PHASES,
@@ -99,6 +101,7 @@ final class PromptSynthesiser
         return new SynthesisResult($phases, $prompts, $rulesFiles, [
             'included' => $payload['included'],
             'omitted' => $payload['omitted'],
+            'aggregated' => $payload['aggregated'],
             'estimated_tokens' => $payload['estimated_tokens'],
         ], $sent);
     }

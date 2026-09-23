@@ -11,7 +11,7 @@ Detected stack:
 - Tooling the project claims to use: {{ implode(', ', $stack->tooling) ?: 'none detected' }}
 - Package managers: {{ implode(', ', $stack->packageManagers) ?: 'none detected' }}
 
-Findings by category ({{ $included }} shown, {{ $omitted }} omitted for space, lowest severity first omitted):
+Findings by category ({{ $total }} in total, sent as {{ $included }} lines of which {{ $aggregated }} aggregate a repeated rule; {{ $omitted }} omitted for space, lowest severity first):
 @foreach ($byCategory as $category => $count)
 - {{ $category }}: {{ $count }}
 @endforeach

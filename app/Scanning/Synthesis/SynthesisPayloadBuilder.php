@@ -10,58 +10,67 @@ use App\Scanning\Normalise\SecretRedactor;
 
 /**
  * Turns findings into the compact text the LLM sees, most severe first,
- * trimmed to a token budget. Snippets are scrubbed again here so nothing
- * token-shaped ever leaves the process, whichever tool produced the finding.
+ * trimmed to a token budget. A rule that fires more than the aggregation
+ * threshold becomes ONE line with a count and example paths, so the budget
+ * goes to findings that differ from each other. Snippets are scrubbed again
+ * here so nothing token-shaped ever leaves the process.
  */
 final class SynthesisPayloadBuilder
 {
+    private const EXAMPLE_PATHS = 5;
+
     public function __construct(
         private readonly int $tokenBudget = 24000,
         private readonly int $maxFindings = 150,
         private readonly int $maxSnippetLines = 6,
+        private readonly int $aggregateThreshold = 5,
     ) {}
 
     /**
      * @param  int|null  $maxTokens  A hard ceiling from the caller (what the context window leaves after the
      *                               system prompt and the reply allowance); the configured budget still applies.
-     * @return array{text: string, included: int, omitted: int, estimated_tokens: int, by_category: array<string, int>}
+     * @return array{text: string, included: int, omitted: int, aggregated: int, total: int, estimated_tokens: int, by_category: array<string, int>}
      */
     public function build(FindingCollection $findings, ?int $maxTokens = null): array
     {
         $budget = max(500, min($this->tokenBudget, $maxTokens ?? $this->tokenBudget));
-        $sorted = $findings->all();
-        usort($sorted, fn (Finding $a, Finding $b) => $b->severity->rank() <=> $a->severity->rank());
 
         $byCategory = [];
-        foreach ($sorted as $finding) {
+        foreach ($findings as $finding) {
             $byCategory[$finding->category->value] = ($byCategory[$finding->category->value] ?? 0) + 1;
         }
         arsort($byCategory);
 
+        $entries = $this->aggregate($findings);
+        usort($entries, fn (array $a, array $b) => [$b['rank'], $b['count']] <=> [$a['rank'], $a['count']]);
+
         $lines = [];
         $tokens = 0;
         $included = 0;
+        $coveredFindings = 0;
 
-        foreach ($sorted as $finding) {
+        foreach ($entries as $entry) {
             if ($included >= $this->maxFindings) {
                 break;
             }
 
-            $entry = $this->format($finding);
-            $cost = self::estimateTokens($entry);
+            $cost = self::estimateTokens($entry['text']);
             if ($tokens + $cost > $budget) {
                 break;
             }
 
-            $lines[] = $entry;
+            $lines[] = $entry['text'];
             $tokens += $cost;
             $included++;
+            $coveredFindings += $entry['count'];
         }
 
         return [
             'text' => implode("\n", $lines),
             'included' => $included,
-            'omitted' => count($sorted) - $included,
+            'omitted' => $findings->count() - $coveredFindings,
+            'aggregated' => count(array_filter($entries, fn (array $e) => $e['count'] > 1)),
+            'total' => $findings->count(),
             'estimated_tokens' => $tokens,
             'by_category' => $byCategory,
         ];
@@ -74,6 +83,55 @@ final class SynthesisPayloadBuilder
     public static function estimateTokens(string $text): int
     {
         return (int) ceil(strlen($text) / 3);
+    }
+
+    /**
+     * One entry per finding, except rules over the threshold which collapse
+     * into a single entry carrying the count and a few example locations.
+     *
+     * @return list<array{text: string, rank: int, count: int}>
+     */
+    private function aggregate(FindingCollection $findings): array
+    {
+        /** @var array<string, list<Finding>> $groups */
+        $groups = [];
+        foreach ($findings as $finding) {
+            $groups[$finding->tool.'|'.($finding->ruleId ?? '').'|'.$finding->severity->value][] = $finding;
+        }
+
+        $entries = [];
+        foreach ($groups as $group) {
+            if (count($group) <= $this->aggregateThreshold) {
+                foreach ($group as $finding) {
+                    $entries[] = ['text' => $this->format($finding), 'rank' => $finding->severity->rank(), 'count' => 1];
+                }
+
+                continue;
+            }
+
+            $first = $group[0];
+            $paths = array_values(array_unique(array_map(fn (Finding $f) => $f->filePath, $group)));
+            $examples = array_map(fn (Finding $f) => $f->location(), array_slice($group, 0, self::EXAMPLE_PATHS));
+            $more = count($group) - count($examples);
+
+            $entries[] = [
+                'text' => sprintf('- [%s] %d findings in %d files (%s%s) %s: %s Examples: %s%s. Fix the pattern everywhere it occurs, not just the examples.',
+                    $first->severity->value,
+                    count($group),
+                    count($paths),
+                    $first->tool,
+                    $first->ruleId !== null ? '/'.$first->ruleId : '',
+                    $first->category->value,
+                    SecretRedactor::scrub($first->message),
+                    implode('; ', $examples),
+                    $more > 0 ? " (+{$more} more)" : '',
+                ),
+                'rank' => $first->severity->rank(),
+                'count' => count($group),
+            ];
+        }
+
+        return $entries;
     }
 
     private function format(Finding $finding): string

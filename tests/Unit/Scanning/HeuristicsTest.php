@@ -55,7 +55,7 @@ test('stubs, todo markers and placeholder data are flagged', function () {
     $findings = (new PlaceholderCodeHeuristic)->run(fixturePath('sloppy-laravel'));
 
     expect(rulesAt($findings, 'app/Services/OrderService.php'))->toBe([
-        'empty-stub@79', 'not-implemented-stub@68', 'placeholder-data@75', 'todo-marker@78',
+        'not-implemented-stub@68', 'placeholder-data@75', 'todo-marker@78', 'unimplemented-method@79',
     ]);
 });
 

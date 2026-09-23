@@ -147,13 +147,16 @@ return [
             'low' => 1,
             'info' => 0,
         ],
-        // score = 100 * exp(-(density / scale) ^ exponent), density = weighted points per 1k lines.
-        // scale is the density that scores ~37; exponent > 1 keeps light problems in the 80s-90s
-        // and pushes dense ones below 30. See CLAUDE.md for a worked table.
+        // Only critical/high/medium findings drive the curve: density = their weighted points
+        // divided by sqrt(KLOC) (floor 1 KLOC), score = 100 * exp(-(density / scale) ^ exponent).
+        // scale is the density that scores ~37. See CLAUDE.md for a worked table.
         'curve' => [
-            'scale' => (float) env('SENTINEL_SCORE_CURVE_SCALE', 90),
-            'exponent' => (float) env('SENTINEL_SCORE_CURVE_EXPONENT', 2.1),
+            'scale' => (float) env('SENTINEL_SCORE_CURVE_SCALE', 65),
+            'exponent' => (float) env('SENTINEL_SCORE_CURVE_EXPONENT', 1.4),
         ],
+        // Low findings (mostly style) cost low_points each, capped at low_cap points in total.
+        'low_points' => (float) env('SENTINEL_SCORE_LOW_POINTS', 0.1),
+        'low_cap' => (int) env('SENTINEL_SCORE_LOW_CAP', 5),
         'critical_cap' => (int) env('SENTINEL_SCORE_CRITICAL_CAP', 40),
         // Inline suppression comments per thousand lines cost this many points each, up to the cap.
         'suppression_weight' => (float) env('SENTINEL_SCORE_SUPPRESSION_WEIGHT', 2.0),
@@ -193,9 +196,12 @@ return [
         // A 23-finding fixture produced ~12k output tokens; the model does not reliably honour the word limit, so leave headroom.
         'max_output_tokens' => (int) env('SENTINEL_LLM_MAX_OUTPUT_TOKENS', 32000),
         'context_window' => (int) env('SENTINEL_LLM_CONTEXT_WINDOW', 200000),
-        'timeout_seconds' => (int) env('SENTINEL_LLM_TIMEOUT', 300),
+        // Non-streaming: the whole reply is generated before a byte arrives, and 15-20k output tokens take several minutes.
+        'timeout_seconds' => (int) env('SENTINEL_LLM_TIMEOUT', 600),
         'max_snippet_lines' => 6,
         'max_findings' => (int) env('SENTINEL_LLM_MAX_FINDINGS', 150),
+        // A rule firing more than this many times is sent as one aggregated finding with a count and example paths.
+        'aggregate_threshold' => (int) env('SENTINEL_LLM_AGGREGATE_THRESHOLD', 5),
         'target_editors' => ['claude_code', 'cursor'],
     ],
 
