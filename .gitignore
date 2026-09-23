@@ -40,3 +40,4 @@ Thumbs.db
 # Fixture repos are hand-written stubs. Never commit real installed dependencies.
 /tests/Fixtures/repos/**/vendor/
 /tests/Fixtures/repos/**/node_modules/
+/storage/sentinel-tools

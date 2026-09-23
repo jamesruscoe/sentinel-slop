@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Scanning\Detect;
 
+use App\Scanning\Heuristics\ComposerNamespaceScanner;
+
 /**
  * What is actually installed, from lockfiles, versus what the manifests
  * declare. composer.lock carries every package's PSR-4/PSR-0 autoload map,
@@ -116,6 +118,33 @@ final class DependencyIndex
         }
 
         return null;
+    }
+
+    /**
+     * Whether a fully qualified name is plausibly provided by something the
+     * project depends on: exactly, via composer.lock, or, when there is no
+     * lock, because its namespace root matches a declared vendor (or a
+     * well-known alias such as Illuminate => laravel).
+     */
+    public function probablyProvided(string $fqcn): bool
+    {
+        if ($this->resolvePhp($fqcn) !== null) {
+            return true;
+        }
+
+        if ($this->hasComposerLock) {
+            return false;
+        }
+
+        $root = strtolower(explode(chr(92), ltrim($fqcn, chr(92)))[0]);
+        $vendors = [];
+        foreach (array_keys($this->composerDeclared) as $package) {
+            $vendors[explode('/', $package)[0]] = true;
+        }
+
+        $candidates = ComposerNamespaceScanner::ALIASES[$root] ?? [$root];
+
+        return array_intersect($candidates, array_keys($vendors)) !== [] || (isset($vendors['laravel']) && in_array('laravel', $candidates, true));
     }
 
     public function composerDeclares(string $package): bool

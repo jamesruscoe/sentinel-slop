@@ -5,6 +5,7 @@ use App\Scanning\Analysers\PhpStanAnalyser;
 use App\Scanning\Analysers\PintAnalyser;
 use App\Scanning\Data\Finding;
 use App\Scanning\Enums\FindingCategory;
+use App\Scanning\Process\ToolLocator;
 
 beforeEach(function () {
     $this->workspace = workspaceFromFixture('sloppy-laravel');
@@ -61,4 +62,31 @@ test('the same errors are kept when the repository is not a Laravel application'
     $identifiers = array_map(fn ($f) => (string) $f->ruleId, app(PhpStanAnalyser::class)->run($workspace->repoPath())->all());
 
     expect($identifiers)->toContain('return.type');
+});
+
+test('phpstan runs from a detached phar and never sees our own vendor symbols', function () {
+    $command = app(ToolLocator::class)->command('phpstan');
+    $phar = str_replace(chr(92), '/', $command[1]);
+
+    expect($phar)->toEndWith('/phpstan.phar')
+        ->and($phar)->not->toContain('/vendor/')
+        ->and(is_file($phar))->toBeTrue();
+
+    $workspace = workspaceFromFixture('lockfile-deps');
+    $messages = array_map(fn (Finding $f) => $f->message, app(PhpStanAnalyser::class)->run($workspace->repoPath())->all());
+
+    // With no autoloader in reach every vendor type is unknown; those errors are ignored or dropped,
+    // so nothing PHPStan reports can be a judgement about a framework version we ship.
+    expect(implode("\n", $messages))->not->toContain('Illuminate'.chr(92))->not->toContain('Carbon'.chr(92))->not->toContain('Symfony'.chr(92));
+});
+
+test('errors that only exist because a dependency is invisible are dropped, real ones stay', function () {
+    $workspace = workspaceFromFixture('lockfile-deps');
+    $findings = app(PhpStanAnalyser::class)->run($workspace->repoPath());
+    $identifiers = array_map(fn (Finding $f) => (string) $f->ruleId, $findings->all());
+
+    // new CareLogResource($log) with an invisible JsonResource parent, @throws on an invisible exception class.
+    expect($identifiers)->not->toContain('new.noConstructor', 'throws.notThrowable', 'class.noParent')
+        ->and($identifiers)->toContain('return.type')
+        ->and(array_filter($findings->all(), fn (Finding $f) => $f->ruleId === 'return.type'))->toHaveCount(1);
 });

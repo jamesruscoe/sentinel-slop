@@ -25,7 +25,7 @@ final class ToolLocator
     public function command(string $tool): array
     {
         return match ($tool) {
-            'phpstan' => [$this->binary('php'), $this->file('phpstan')],
+            'phpstan' => [$this->binary('php'), $this->detached('phpstan')],
             'pint' => [$this->binary('php'), $this->file('pint')],
             'eslint' => [$this->binary('node'), $this->file('eslint')],
             'jscpd' => [$this->binary('node'), $this->file('jscpd')],
@@ -61,6 +61,37 @@ final class ToolLocator
         }
 
         return $report;
+    }
+
+    /**
+     * A copy of the tool's phar outside Sentinel Slop's vendor tree. PHPStan's
+     * bootstrap looks for a Composer autoloader relative to its own location
+     * (and in $GLOBALS['_composer_autoload_path'] when launched through
+     * Composer's bin proxy); run from vendor/ it would load OUR autoloader and
+     * judge user code against our framework versions. Run from here it finds
+     * nothing, which is the point. Refreshed whenever the vendor phar changes.
+     */
+    private function detached(string $tool): string
+    {
+        $source = $this->file($tool);
+        $directory = rtrim(str_replace(chr(92), '/', (string) ($this->tools['detached_dir'] ?? '')), '/');
+
+        if ($directory === '') {
+            throw new AnalyserUnavailableException("No detached tools directory configured (sentinel.tools.detached_dir) for {$tool}.");
+        }
+
+        if (! is_dir($directory) && ! mkdir($directory, 0700, true) && ! is_dir($directory)) {
+            throw new AnalyserUnavailableException("Could not create the detached tools directory \"{$directory}\".");
+        }
+
+        $target = $directory.'/'.$tool.'.phar';
+        $stale = ! is_file($target) || filesize($target) !== filesize($source) || (filemtime($target) ?: 0) < (filemtime($source) ?: 0);
+
+        if ($stale && ! copy($source, $target)) {
+            throw new AnalyserUnavailableException("Could not copy {$tool} to \"{$target}\".");
+        }
+
+        return $target;
     }
 
     private function file(string $tool): string

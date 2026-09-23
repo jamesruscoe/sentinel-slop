@@ -96,7 +96,10 @@ return [
     'tools' => [
         'php' => env('SENTINEL_PHP_BINARY', PHP_BINARY),
         'node' => env('SENTINEL_NODE_BINARY', 'node'),
-        'phpstan' => env('SENTINEL_PHPSTAN_PATH', base_path('vendor/phpstan/phpstan/phpstan')),
+        // The phar itself, not Composer's bin proxy or the package launcher: those load OUR autoloader into PHPStan.
+        'phpstan' => env('SENTINEL_PHPSTAN_PATH', base_path('vendor/phpstan/phpstan/phpstan.phar')),
+        // The phar is copied here and run from here so PHPStan cannot find any autoloader relative to itself.
+        'detached_dir' => env('SENTINEL_TOOLS_DETACHED_DIR', storage_path('sentinel-tools')),
         'pint' => env('SENTINEL_PINT_PATH', base_path('vendor/laravel/pint/builds/pint')),
         'eslint' => env('SENTINEL_ESLINT_PATH', base_path('node_modules/eslint/bin/eslint.js')),
         'jscpd' => env('SENTINEL_JSCPD_PATH', base_path('node_modules/jscpd/run-jscpd.js')),

@@ -23,6 +23,8 @@ final class CategoryMapper
             str_starts_with($id, 'deadCode.'), str_contains($id, '.always'), str_starts_with($id, 'unreachable') => [FindingCategory::DeadCode, Severity::Low],
             str_starts_with($id, 'syntax'), str_starts_with($id, 'parse') => [FindingCategory::Other, Severity::High],
             str_starts_with($id, 'catch.'), str_starts_with($id, 'throws.'), str_starts_with($id, 'exception.') => [FindingCategory::ErrorHandling, Severity::Medium],
+            // "Unnecessary" checks: over-defensive code, not a type hole.
+            $id === 'nullsafe.neverNull', str_ends_with($id, '.alreadyNarrowedType'), str_starts_with($id, 'isset.'), str_starts_with($id, 'nullCoalesce.') => [FindingCategory::Style, Severity::Low],
             default => [FindingCategory::TypeSafety, Severity::Medium],
         };
     }
