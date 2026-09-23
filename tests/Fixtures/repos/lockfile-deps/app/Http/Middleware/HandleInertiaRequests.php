@@ -2,8 +2,10 @@
 
 namespace App\Http\Middleware;
 
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Inertia\Middleware;
+use Symfony\Component\HttpFoundation\Response;
 use Tighten\Ziggy\Ziggy;
 
 class HandleInertiaRequests extends Middleware
@@ -15,6 +17,6 @@ class HandleInertiaRequests extends Middleware
 
     public function share(Request $request): array
     {
-        return array_merge(parent::share($request), ['ziggy' => fn () => (new Ziggy)->toArray()]);
+        return array_merge(parent::share($request), ['ziggy' => fn () => (new Ziggy)->toArray(), 'now' => Carbon::now()->toIso8601String(), 'ok' => Response::HTTP_OK]);
     }
 }

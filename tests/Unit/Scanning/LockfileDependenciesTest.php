@@ -39,7 +39,7 @@ test('the three outcomes are reported separately and installed-and-declared impo
 
     expect($findings)->toBe([
         ['hallucinated-php-namespace', 'medium', 'app/Models/CareLog.php:5', 'Namespace Acme\Fake is not provided by any package in composer.lock; the import may be hallucinated.'],
-        ['undeclared-transitive-php-package', 'low', 'app/Models/CareLog.php:7', 'Spatie\Image\Enums\Fit is provided by spatie/image, which is installed only as a transitive dependency; declare it explicitly in composer.json.'],
+        ['undeclared-transitive-php-package', 'low', 'app/Models/CareLog.php:7', 'Spatie\Image\Enums\Fit is provided by spatie/image, which is not in composer.json (it is installed because spatie/laravel-medialibrary requires it); declare it explicitly.'],
         ['undeclared-transitive-npm-package', 'low', 'resources/js/app.js:2', 'Package "axios" is imported and installed, but only as a transitive dependency; declare it explicitly in package.json.'],
         ['undeclared-transitive-npm-package', 'low', 'resources/js/app.js:3', 'Package "@vue/server-renderer" is imported and installed, but only as a transitive dependency; declare it explicitly in package.json.'],
         ['hallucinated-npm-package', 'medium', 'resources/js/app.js:4', 'Package "left-pad-fake" is imported but neither declared in package.json nor present in the lockfile; the import may be hallucinated.'],
@@ -47,6 +47,16 @@ test('the three outcomes are reported separately and installed-and-declared impo
 
     $hallucinated = array_filter($findings, fn (array $f) => $f[0] === 'hallucinated-php-namespace');
     expect($hallucinated)->toHaveCount(1);
+});
+
+test('types the framework hands out through its own API are not transitive findings while the framework is declared', function () {
+    $index = DependencyIndex::build(fixturePath('lockfile-deps'));
+
+    expect($index->resolvePhp('Carbon\Carbon'))->toBe('nesbot/carbon')
+        ->and($index->composerDeclares('nesbot/carbon'))->toBeFalse()
+        ->and($index->composerRequiredBy('spatie/image'))->toBe('spatie/laravel-medialibrary')
+        ->and($index->composerRequiredBy('nesbot/carbon'))->toBe('laravel/framework')
+        ->and(array_filter(depFindings(fixturePath('lockfile-deps')), fn (array $f) => str_contains($f[3], 'Carbon') || str_contains($f[3], 'Symfony')))->toBe([]);
 });
 
 test('the dog-kennel false positives: Inertia, Spatie\MediaLibrary and Tighten resolve to their real packages', function () {

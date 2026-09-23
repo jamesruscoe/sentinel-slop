@@ -6,12 +6,13 @@
         "Hand-written fixture: package names deliberately differ from their namespaces."
     ],
     "packages": [
-        {"name": "laravel/framework", "version": "v12.0.0", "autoload": {"psr-4": {"Illuminate\\": "src/Illuminate/"}}},
+        {"name": "laravel/framework", "version": "v12.0.0", "require": {"nesbot/carbon": "^3.8", "symfony/http-foundation": "^7.2"}, "autoload": {"psr-4": {"Illuminate\\": "src/Illuminate/"}}},
         {"name": "inertiajs/inertia-laravel", "version": "v2.0.0", "autoload": {"psr-4": {"Inertia\\": "src/"}}},
-        {"name": "spatie/laravel-medialibrary", "version": "11.12.0", "autoload": {"psr-4": {"Spatie\\MediaLibrary\\": "src/"}}},
+        {"name": "spatie/laravel-medialibrary", "version": "11.12.0", "require": {"php": "^8.2", "spatie/image": "^3.3"}, "autoload": {"psr-4": {"Spatie\\MediaLibrary\\": "src/"}}},
         {"name": "spatie/image", "version": "3.7.0", "autoload": {"psr-4": {"Spatie\\Image\\": "src/"}}},
         {"name": "tightenco/ziggy", "version": "v2.0.0", "autoload": {"psr-4": {"Tighten\\Ziggy\\": "src/"}}},
-        {"name": "nesbot/carbon", "version": "3.8.0", "autoload": {"psr-4": {"Carbon\\": "src/Carbon/"}}}
+        {"name": "nesbot/carbon", "version": "3.8.0", "autoload": {"psr-4": {"Carbon\\": "src/Carbon/"}}},
+        {"name": "symfony/http-foundation", "version": "v7.2.0", "autoload": {"psr-4": {"Symfony\\Component\\HttpFoundation\\": ""}}}
     ],
     "packages-dev": []
 }

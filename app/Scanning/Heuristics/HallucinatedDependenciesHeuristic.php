@@ -25,6 +25,20 @@ use App\Scanning\Enums\Severity;
  */
 final class HallucinatedDependenciesHeuristic implements Heuristic
 {
+    /**
+     * Packages whose types a framework hands to application code through its
+     * own public API (Carbon dates, Symfony responses, Monolog handlers in
+     * config/logging.php). Using them is using the framework, not a hidden
+     * transitive dependency, so they are not reported while that framework
+     * is declared. Anything else installed transitively is still flagged.
+     *
+     * @var array<string, list<string>> declared framework package => provider package prefixes
+     */
+    private const FRAMEWORK_SURFACE = [
+        'laravel/framework' => ['nesbot/carbon', 'symfony/', 'monolog/monolog', 'psr/', 'league/flysystem', 'brick/math', 'ramsey/uuid', 'illuminate/', 'vlucas/phpdotenv', 'egulias/email-validator', 'guzzlehttp/'],
+        'symfony/framework-bundle' => ['symfony/', 'psr/', 'doctrine/', 'monolog/monolog', 'twig/'],
+    ];
+
     public function __construct(
         private readonly ComposerNamespaceScanner $composer = new ComposerNamespaceScanner,
         private readonly NpmImportScanner $npm = new NpmImportScanner,
@@ -70,12 +84,13 @@ final class HallucinatedDependenciesHeuristic implements Heuristic
             $package = $index->resolvePhp($hit['name']);
 
             if ($package !== null) {
-                if ($index->composerDeclares($package) || isset($reported[$package])) {
+                if ($index->composerDeclares($package) || isset($reported[$package]) || self::frameworkSurface($package, $index)) {
                     continue;
                 }
                 $reported[$package] = true;
+                $via = $index->composerRequiredBy($package);
                 $findings->add(new Finding($this->name(), 'undeclared-transitive-php-package', FindingCategory::HallucinatedDependency, Severity::Low, $hit['file'], $hit['line'],
-                    "{$hit['name']} is provided by {$package}, which is installed only as a transitive dependency; declare it explicitly in composer.json."));
+                    "{$hit['name']} is provided by {$package}, which is not in composer.json".($via !== null ? " (it is installed because {$via} requires it)" : ' (installed only as a transitive dependency)').'; declare it explicitly.'));
 
                 continue;
             }
@@ -132,6 +147,22 @@ final class HallucinatedDependenciesHeuristic implements Heuristic
             $findings->add(new Finding($this->name(), 'hallucinated-npm-package', FindingCategory::HallucinatedDependency, $workspaces ? Severity::Low : Severity::Medium, $hit['file'], $hit['line'],
                 "Package \"{$name}\" is imported but neither declared in package.json nor present in the lockfile; the import may be hallucinated.".($workspaces ? ' Workspaces are configured, so it may be a workspace package.' : '')));
         }
+    }
+
+    private static function frameworkSurface(string $package, DependencyIndex $index): bool
+    {
+        foreach (self::FRAMEWORK_SURFACE as $framework => $prefixes) {
+            if (! $index->composerDeclares($framework)) {
+                continue;
+            }
+            foreach ($prefixes as $prefix) {
+                if (str_starts_with($package, $prefix)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /**

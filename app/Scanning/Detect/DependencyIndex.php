@@ -21,6 +21,7 @@ final class DependencyIndex
      * @param  array<string, string>  $phpPrefixes  namespace prefix with trailing backslash => package name, from composer.lock autoload maps
      * @param  array<string, true>  $npmDeclared  package name => true (package.json dependency sections)
      * @param  array<string, true>  $npmInstalled  package name => true (from the npm/yarn/pnpm lockfile)
+     * @param  array<string, list<string>>  $composerRequires  package name => packages it requires, from composer.lock
      */
     public function __construct(
         public readonly bool $hasComposerLock,
@@ -29,6 +30,7 @@ final class DependencyIndex
         public readonly bool $hasNpmLock,
         public readonly array $npmDeclared,
         public readonly array $npmInstalled,
+        public readonly array $composerRequires = [],
     ) {}
 
     public static function build(string $repoPath, int $maxLockfileBytes = 8 * 1024 * 1024): self
@@ -45,11 +47,13 @@ final class DependencyIndex
 
         $lock = self::readJson($root.'/composer.lock', $maxLockfileBytes);
         $phpPrefixes = [];
+        $requires = [];
         foreach (['packages', 'packages-dev'] as $section) {
             foreach (is_array($lock[$section] ?? null) ? $lock[$section] : [] as $package) {
                 if (! is_array($package) || ! is_string($package['name'] ?? null)) {
                     continue;
                 }
+                $requires[strtolower($package['name'])] = array_values(array_filter(array_map(fn ($n) => strtolower((string) $n), array_keys(is_array($package['require'] ?? null) ? $package['require'] : [])), fn (string $n) => str_contains($n, '/')));
                 foreach (['psr-4', 'psr-0'] as $standard) {
                     foreach (array_keys(is_array($package['autoload'][$standard] ?? null) ? $package['autoload'][$standard] : []) as $prefix) {
                         $prefix = trim(str_replace('_', chr(92), (string) $prefix), chr(92));
@@ -71,7 +75,7 @@ final class DependencyIndex
 
         [$hasNpmLock, $npmInstalled] = self::npmLock($root, $maxLockfileBytes);
 
-        return new self($lock !== null, $composerDeclared, $phpPrefixes, $hasNpmLock, $npmDeclared, $npmInstalled);
+        return new self($lock !== null, $composerDeclared, $phpPrefixes, $hasNpmLock, $npmDeclared, $npmInstalled, $requires);
     }
 
     public static function isLockfile(string $path): bool
@@ -97,6 +101,21 @@ final class DependencyIndex
         }
 
         return $best;
+    }
+
+    /**
+     * A declared package that directly requires the given installed package, if any.
+     */
+    public function composerRequiredBy(string $package): ?string
+    {
+        $package = strtolower($package);
+        foreach ($this->composerRequires as $parent => $children) {
+            if (isset($this->composerDeclared[$parent]) && in_array($package, $children, true)) {
+                return $parent;
+            }
+        }
+
+        return null;
     }
 
     public function composerDeclares(string $package): bool

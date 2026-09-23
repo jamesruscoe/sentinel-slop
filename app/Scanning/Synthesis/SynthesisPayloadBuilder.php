@@ -111,19 +111,26 @@ final class SynthesisPayloadBuilder
 
             $first = $group[0];
             $paths = array_values(array_unique(array_map(fn (Finding $f) => $f->filePath, $group)));
-            $examples = array_map(fn (Finding $f) => $f->location(), array_slice($group, 0, self::EXAMPLE_PATHS));
-            $more = count($group) - count($examples);
+            $messages = array_values(array_unique(array_map(fn (Finding $f) => $f->message, $group)));
+            $more = count($group) - self::EXAMPLE_PATHS;
+
+            // Identical messages (Pint, narrating comments): one message plus example locations.
+            // Differing messages (one rule, many subjects): each example keeps its own message so
+            // the model never attributes one instance's subject to the others.
+            $examples = count($messages) === 1
+                ? implode('; ', array_map(fn (Finding $f) => $f->location(), array_slice($group, 0, self::EXAMPLE_PATHS)))
+                : implode('; ', array_map(fn (Finding $f) => $f->location().' ('.self::shorten(SecretRedactor::scrub($f->message)).')', array_slice($group, 0, self::EXAMPLE_PATHS)));
 
             $entries[] = [
-                'text' => sprintf('- [%s] %d findings in %d files (%s%s) %s: %s Examples: %s%s. Fix the pattern everywhere it occurs, not just the examples.',
+                'text' => sprintf('- [%s] %d findings in %d files (%s%s) %s: %s%s%s. Fix the pattern everywhere it occurs, not just the examples.',
                     $first->severity->value,
                     count($group),
                     count($paths),
                     $first->tool,
                     $first->ruleId !== null ? '/'.$first->ruleId : '',
                     $first->category->value,
-                    SecretRedactor::scrub($first->message),
-                    implode('; ', $examples),
+                    count($messages) === 1 ? SecretRedactor::scrub($first->message).' Examples: ' : 'Instances: ',
+                    $examples,
                     $more > 0 ? " (+{$more} more)" : '',
                 ),
                 'rank' => $first->severity->rank(),
@@ -132,6 +139,11 @@ final class SynthesisPayloadBuilder
         }
 
         return $entries;
+    }
+
+    private static function shorten(string $message): string
+    {
+        return mb_strlen($message) > 160 ? mb_substr($message, 0, 159).'…' : $message;
     }
 
     private function format(Finding $finding): string

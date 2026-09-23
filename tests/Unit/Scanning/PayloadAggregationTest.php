@@ -42,6 +42,16 @@ test('aggregation frees the budget for findings that differ from each other', fu
         ->and($tight['text'])->toContain('200 findings in 200 files (pint/style)');
 });
 
+test('an aggregated rule whose messages differ keeps each example with its own message', function () {
+    $findings = new FindingCollection(array_map(fn (int $i) => aggFinding('deps', 'transitive', 'low', "app/F{$i}.php", "Package {$i} is only transitive"), range(1, 7)));
+
+    $text = (new SynthesisPayloadBuilder(aggregateThreshold: 5))->build($findings)['text'];
+
+    expect($text)->toContain('7 findings in 7 files (deps/transitive) style: Instances: app/F1.php:1 (Package 1 is only transitive); app/F2.php:1 (Package 2 is only transitive)')
+        ->and($text)->toContain('(+2 more)')
+        ->and($text)->not->toContain('Examples:');
+});
+
 test('rules at or under the threshold stay itemised', function () {
     $findings = new FindingCollection(array_map(fn (int $i) => aggFinding('pint', 'style', 'low', "app/F{$i}.php"), range(1, 5)));
 
