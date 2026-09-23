@@ -18,9 +18,7 @@ final class ScanDispatcher
      */
     public function dispatch(Repository $repository, ?User $user = null, ?string $model = null): Scan
     {
-        $active = array_map(fn (ScanStatus $s) => $s->value, array_filter(ScanStatus::cases(), fn (ScanStatus $s) => $s->isActive()));
-
-        if ($repository->scans()->whereIn('status', $active)->exists()) {
+        if ($repository->scans()->whereIn('status', ScanStatus::activeValues())->exists()) {
             throw new ScanAlreadyRunningException('A scan of this repository is already in progress.');
         }
 

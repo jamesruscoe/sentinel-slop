@@ -14,7 +14,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 /**
  * @property ScanStatus $status
  * @property array<string, mixed>|null $detected_stack
- * @property list<array<string, mixed>>|null $skipped_files
+ * @property array<string, mixed>|null $skipped_files {total, counts, entries[], truncated} from SkippedFileSummary
  * @property array{system: string, user: string, model: string, truncated?: bool, usage?: array{finish_reason: string, input_tokens: int, output_tokens: int}}|null $synthesis_payload
  */
 #[Fillable([

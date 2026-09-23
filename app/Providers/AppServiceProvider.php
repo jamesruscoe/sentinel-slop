@@ -9,7 +9,10 @@ use App\Services\GitHub\WebhookSignatureVerifier;
 use App\Services\Scanning\ContentSourceResolver;
 use App\Services\Scanning\InstallationContentSourceResolver;
 use App\Services\Scanning\ScanWorkspaceFactory;
+use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -23,6 +26,11 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Model::shouldBeStrict(! $this->app->isProduction());
+
+        // Starting scans is expensive (fetch + analysers + an LLM call): a handful per user per hour.
+        RateLimiter::for('scans', fn (Request $request) => Limit::perHour((int) config('sentinel.limits.scans_per_user_per_hour', 10))
+            ->by($request->user() !== null ? (string) $request->user()->id : (string) $request->ip())
+            ->response(fn () => back()->with('error', 'Too many scans started recently. Please wait a while before starting another.')));
     }
 
     private function registerGitHub(): void

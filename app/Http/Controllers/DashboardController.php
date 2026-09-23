@@ -12,10 +12,13 @@ class DashboardController extends Controller
         $repositories = $request->user()
             ->repositories()
             ->whereNull('repositories.removed_at')
-            ->with(['installation', 'latestCompletedScan'])
+            ->with(['installation', 'latestScan', 'latestCompletedScan'])
             ->orderBy('repositories.full_name')
             ->get();
 
-        return view('dashboard', ['repositories' => $repositories]);
+        return view('dashboard', [
+            'repositories' => $repositories,
+            'models' => (array) config('sentinel.synthesis.models', []),
+        ]);
     }
 }

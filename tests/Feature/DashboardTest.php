@@ -25,7 +25,7 @@ test('the dashboard lists only the current user\'s active repositories with thei
 
     $this->actingAs($user)->get(route('dashboard'))
         ->assertOk()
-        ->assertSeeInOrder(['me/fresh', 'Not scanned yet', 'me/scanned', 'Score 73'])
+        ->assertSeeInOrder(['me/fresh', 'Not scanned yet', 'me/scanned', 'Score', '73'])
         ->assertDontSee('me/removed')
         ->assertDontSee('someone/else');
 });

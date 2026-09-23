@@ -27,6 +27,7 @@ return [
     | Fetch and preflight limits. Enforced while downloading, not afterwards.
     */
     'limits' => [
+        'scans_per_user_per_hour' => (int) env('SENTINEL_SCANS_PER_USER_PER_HOUR', 10),
         'max_total_bytes' => (int) env('SENTINEL_MAX_TOTAL_BYTES', 50 * 1024 * 1024),
         'max_file_count' => (int) env('SENTINEL_MAX_FILE_COUNT', 5000),
         'max_single_file_bytes' => (int) env('SENTINEL_MAX_SINGLE_FILE_BYTES', 1024 * 1024),

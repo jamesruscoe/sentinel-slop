@@ -64,6 +64,10 @@ Prompt synthesis goes through [Prism](https://prismphp.com). Set `SENTINEL_LLM_P
 
 **Windows Defender note:** `tests/Fixtures/repos/backdoor-samples` and the temp copies made under `%TEMP%\sentinel-tests` contain webshell-like text and may be quarantined mid-test. Add both folders as Defender exclusions before running the suite.
 
+## Using it
+
+Sign in with GitHub, install the app on the repositories you want scanned, then press **Scan** next to a repository. The scan page updates live (Reverb, with polling as a fallback) and, once complete, shows the slop score, the detected stack, the findings, the five fix-it prompts for Claude Code or Cursor, a rules file to keep in the repository, and exactly what was sent to the AI provider. Scan history is under **Scans**.
+
 ## Tests and static analysis
 
 ```

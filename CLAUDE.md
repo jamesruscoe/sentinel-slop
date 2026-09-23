@@ -124,6 +124,12 @@ The stretched exponential is flat near zero and flattens again at the bottom, so
 
 `php artisan sentinel:scan-fixture <fixture|dir> [--model=] [--editor=claude_code|cursor] [--no-synthesis]` runs the full pipeline synchronously against a local directory (via `LocalDirectoryContentSource`) with real analysers and a real LLM call, then prints the payload, prompts and rules file. Development only; refuses to run in production.
 
+### UI (phase 5)
+
+Routes (all `auth`): `/dashboard` (repositories + scan buttons), `/scans` and `/repositories/{repository}/scans` (history, `ScanController`), `/scans/{scan}` (`App\Livewire\ScanShow`, one full-page Livewire component for both live progress and results), `/scans/{scan}/rules/{editor}` and `/scans/{scan}/prompts/{editor}` (downloads). `POST /repositories/{repository}/scans` validates the model through `StoreScanRequest` (authorises via `RepositoryPolicy::scan`), is throttled by the `scans` rate limiter (`limits.scans_per_user_per_hour`, default 10) and redirects to the running scan when one exists.
+
+`ScanShow` listens on `echo-private:scans.{uuid},.scan.progressed` (Livewire's Echo bridge; the leading dot matches `broadcastAs`) and also `wire:poll.5s` while the scan is active, so progress works without websockets. Computed properties are called as methods in `render()` because Larastan cannot see Livewire's magic property access. Views are dark-theme Tailwind 4 with no component library; Alpine (bundled with Livewire) handles copy-to-clipboard and accordions. Partials live in `resources/views/scans/partials/`. After changing Blade classes run `npm run build` (Node 24 from Herd's nvm: `~/.config/herd/bin/nvm/v24.0.1`).
+
 ## Conventions
 
 - Controllers are thin: validate → service → redirect/view. Business logic lives in `app/Services` and `app/Scanning`.
@@ -157,5 +163,5 @@ Site: http://sentinel-slop.test (junction in Herd's Sites directory points at th
 2. Scanning core (done): `App\Scanning` interfaces/DTOs, FetchRepository, PreflightCheck, stack detection, normalisation, cleanup, fixture repos in `tests/Fixtures/repos/` (hand-written stubs only; vendor/node_modules there are gitignored and created at test time).
 3. Analysers (done): ProcessRunner, bundled configs, tool runners, slop heuristics, malicious-config canary tests, `sentinel:doctor`.
 4. Synthesis (done): rulesets, slop score, redaction, Prism, prompt and rules-file generation, undefined-member and suppression-density heuristics.
-5. UI: landing, dashboard, live scan page, results, history.
+5. UI (done): dashboard with scan buttons, live scan page, results (score, stack, prompts, rules file, findings, payload), history.
 6. Hardening and deploy prep: rate limiting, failure handling, sweeper, Horizon supervisors, README for Forge.

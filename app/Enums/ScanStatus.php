@@ -65,6 +65,14 @@ enum ScanStatus: string
     }
 
     /**
+     * @return list<string> Values of every non-terminal status.
+     */
+    public static function activeValues(): array
+    {
+        return array_values(array_map(fn (self $s) => $s->value, array_filter(self::cases(), fn (self $s) => $s->isActive())));
+    }
+
+    /**
      * The pipeline order, used to validate transitions.
      *
      * @return list<self>

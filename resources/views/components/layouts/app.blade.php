@@ -14,7 +14,8 @@
             <a href="{{ route('home') }}" class="text-lg font-semibold tracking-tight">Sentinel Slop</a>
             <nav class="flex items-center gap-4 text-sm">
                 @auth
-                    <a href="{{ route('dashboard') }}" class="hover:text-white">Dashboard</a>
+                    <a href="{{ route('dashboard') }}" class="hover:text-white">Repositories</a>
+                    <a href="{{ route('scans.index') }}" class="hover:text-white">Scans</a>
                     <form method="POST" action="{{ route('logout') }}">
                         @csrf
                         <button type="submit" class="text-zinc-400 hover:text-white">Sign out</button>
@@ -33,6 +34,9 @@
         @endif
         @if (session('error'))
             <div class="mb-6 rounded-md border border-red-800 bg-red-950 px-4 py-3 text-sm text-red-200">{{ session('error') }}</div>
+        @endif
+        @if ($errors->any())
+            <div class="mb-6 rounded-md border border-red-800 bg-red-950 px-4 py-3 text-sm text-red-200">{{ $errors->first() }}</div>
         @endif
 
         {{ $slot }}
