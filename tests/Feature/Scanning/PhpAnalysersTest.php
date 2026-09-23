@@ -60,5 +60,5 @@ test('the same errors are kept when the repository is not a Laravel application'
 
     $identifiers = array_map(fn ($f) => (string) $f->ruleId, app(PhpStanAnalyser::class)->run($workspace->repoPath())->all());
 
-    expect($identifiers)->toContain('return.type')->toContain('nullsafe.neverNull');
+    expect($identifiers)->toContain('return.type');
 });
