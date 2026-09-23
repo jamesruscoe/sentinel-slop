@@ -7,12 +7,19 @@ namespace App\Scanning\Heuristics;
 use PhpParser\Node;
 
 /**
- * Finds PHP vendor namespaces that no composer dependency provides.
+ * Collects every fully qualified vendor name a PHP codebase references
+ * (use statements, group uses, fully qualified names), excluding the
+ * repository's own namespaces. Resolution against lockfiles happens in
+ * HallucinatedDependenciesHeuristic; this class only finds candidates.
  */
 final class ComposerNamespaceScanner
 {
-    /** @var array<string, list<string>>  namespace root => composer vendors that provide it */
-    private const ALIASES = [
+    /**
+     * Manifest-only fallback when there is no composer.lock: namespace root => vendors that ship it.
+     *
+     * @var array<string, list<string>>
+     */
+    public const ALIASES = [
         'illuminate' => ['laravel', 'illuminate'],
         'carbon' => ['nesbot', 'laravel'],
         'symfony' => ['symfony', 'laravel'],
@@ -35,17 +42,10 @@ final class ComposerNamespaceScanner
 
     /**
      * @param  array<string, mixed>  $composer  Decoded composer.json.
-     * @return list<array{namespace: string, file: string, line: int}>
+     * @return list<array{name: string, file: string, line: int}> Unique fully qualified names, first occurrence each.
      */
     public function scan(string $repoPath, array $composer): array
     {
-        $vendors = [];
-        foreach (['require', 'require-dev'] as $section) {
-            foreach (array_keys(is_array($composer[$section] ?? null) ? $composer[$section] : []) as $package) {
-                $vendors[strtolower(explode('/', (string) $package)[0])] = true;
-            }
-        }
-
         $own = array_fill_keys(self::ALWAYS_LOCAL, true);
         foreach (['autoload', 'autoload-dev'] as $section) {
             foreach (['psr-4', 'psr-0'] as $standard) {
@@ -55,8 +55,8 @@ final class ComposerNamespaceScanner
             }
         }
 
-        /** @var array<string, array{namespace: string, file: string, line: int}> $seen */
-        $seen = [];
+        /** @var list<array{0: list<array{0: Node\Name, 1: int}>, 1: string}> $perFile */
+        $perFile = [];
 
         foreach (SourceFiles::in($repoPath, SourceFiles::PHP) as $file) {
             $ast = PhpSource::parse($file['absolute']);
@@ -70,32 +70,23 @@ final class ComposerNamespaceScanner
                 }
             }
 
-            foreach ($this->referencedNames($ast) as [$name, $line]) {
-                if (count($name->getParts()) < 2) {
+            $perFile[] = [$this->referencedNames($ast), $file['path']];
+        }
+
+        /** @var array<string, array{name: string, file: string, line: int}> $seen */
+        $seen = [];
+
+        foreach ($perFile as [$names, $path]) {
+            foreach ($names as [$name, $line]) {
+                if (count($name->getParts()) < 2 || isset($own[strtolower($name->getFirst())])) {
                     continue;
                 }
 
-                $seen[strtolower($name->getFirst())] ??= ['namespace' => $name->getFirst(), 'file' => $file['path'], 'line' => $line];
+                $seen[strtolower($name->toString())] ??= ['name' => $name->toString(), 'file' => $path, 'line' => $line];
             }
         }
 
-        $isLaravel = isset($vendors['laravel']);
-        $undeclared = [];
-
-        foreach ($seen as $root => $first) {
-            if (isset($own[$root])) {
-                continue;
-            }
-
-            $candidates = self::ALIASES[$root] ?? [$root];
-            if (array_intersect($candidates, array_keys($vendors)) !== [] || ($isLaravel && in_array('laravel', $candidates, true))) {
-                continue;
-            }
-
-            $undeclared[] = $first;
-        }
-
-        return $undeclared;
+        return array_values($seen);
     }
 
     /**
@@ -113,7 +104,9 @@ final class ComposerNamespaceScanner
         }
 
         foreach (PhpSource::find($ast, Node\Stmt\GroupUse::class) as $group) {
-            $names[] = [$group->prefix, $group->getStartLine()];
+            foreach ($group->uses as $item) {
+                $names[] = [Node\Name::concat($group->prefix, $item->name) ?? $group->prefix, $group->getStartLine()];
+            }
         }
 
         foreach (PhpSource::find($ast, Node\Name\FullyQualified::class) as $name) {

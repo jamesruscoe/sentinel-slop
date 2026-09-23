@@ -62,7 +62,7 @@ final class GitHubTreeFetcher implements RepositoryFetcher
             $content = $this->source->getBlob($owner, $name, $sha);
             $size = strlen($content);
 
-            if ($size > $limits->maxSingleFileBytes) {
+            if ($size > $limits->limitFor($path)) {
                 $skipped[] = new SkippedFile($path, SkipReason::Oversized, "{$size} bytes");
                 $done++;
 
@@ -138,7 +138,7 @@ final class GitHubTreeFetcher implements RepositoryFetcher
             }
 
             $size = (int) ($entry['size'] ?? 0);
-            if ($size > $limits->maxSingleFileBytes) {
+            if ($size > $limits->limitFor($safePath)) {
                 $skipped[] = new SkippedFile($safePath, SkipReason::Oversized, "{$size} bytes");
 
                 continue;

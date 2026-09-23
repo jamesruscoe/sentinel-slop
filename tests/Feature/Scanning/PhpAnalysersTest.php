@@ -41,3 +41,13 @@ test('gitleaks finds a hard-coded api key and reports only its type and location
         ->and($hit->snippet)->toBeNull()
         ->and($hit->message)->not->toContain('Qm7xLp2Z');
 });
+
+test('phpstan drops non-ignorable unknown-symbol errors when the symbol resolves to a package in composer.lock', function () {
+    $workspace = workspaceFromFixture('lockfile-deps');
+    $findings = app(PhpStanAnalyser::class)->run($workspace->repoPath());
+    $identifiers = array_map(fn (Finding $f) => (string) $f->ruleId, $findings->all());
+    $messages = implode("\n", array_map(fn (Finding $f) => $f->message, $findings->all()));
+
+    expect($identifiers)->not->toContain('class.notFound', 'interface.notFound', 'trait.notFound', 'class.noParent')
+        ->and($messages)->not->toContain('Inertia\Middleware', 'Spatie\MediaLibrary', 'Tighten\Ziggy');
+});

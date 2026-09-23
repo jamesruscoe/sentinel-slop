@@ -10,6 +10,7 @@ use App\Scanning\Data\FindingCollection;
 use App\Scanning\Data\PreflightConfig;
 use App\Scanning\Data\PreflightResult;
 use App\Scanning\Data\SkippedFile;
+use App\Scanning\Detect\DependencyIndex;
 use App\Scanning\Enums\Severity;
 use App\Scanning\Enums\SkipReason;
 use App\Scanning\Exceptions\PreflightFailedException;
@@ -90,7 +91,8 @@ final class PreflightChecker
      */
     private function skipReasonFor(array $entry, PreflightConfig $config): ?array
     {
-        if ($entry['size'] > $config->maxSingleFileBytes) {
+        $limit = DependencyIndex::isLockfile($entry['path']) ? max($config->maxSingleFileBytes, $config->maxLockfileBytes) : $config->maxSingleFileBytes;
+        if ($entry['size'] > $limit) {
             return [SkipReason::Oversized, "{$entry['size']} bytes"];
         }
 

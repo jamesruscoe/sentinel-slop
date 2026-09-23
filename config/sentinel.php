@@ -31,6 +31,8 @@ return [
         'max_total_bytes' => (int) env('SENTINEL_MAX_TOTAL_BYTES', 50 * 1024 * 1024),
         'max_file_count' => (int) env('SENTINEL_MAX_FILE_COUNT', 5000),
         'max_single_file_bytes' => (int) env('SENTINEL_MAX_SINGLE_FILE_BYTES', 1024 * 1024),
+        // composer.lock / package-lock.json / yarn.lock / pnpm-lock.yaml are kept (they resolve imports exactly) up to this size.
+        'max_lockfile_bytes' => (int) env('SENTINEL_MAX_LOCKFILE_BYTES', 8 * 1024 * 1024),
     ],
 
     /*
@@ -63,11 +65,6 @@ return [
         '*.min.js',
         '*.min.css',
         '*.map',
-        '*.lock',
-        'package-lock.json',
-        'yarn.lock',
-        'pnpm-lock.yaml',
-        'composer.lock',
         '_ide_helper.php',
         '_ide_helper_models.php',
         '.phpstorm.meta.php',

@@ -17,7 +17,9 @@ parameters:
     parallel:
         maximumNumberOfProcesses: 2
     ignoreErrors:
-        # Symbols that live in uninstalled dependencies.
+        # Symbols that live in uninstalled dependencies. Note: "extends unknown class", "implements unknown
+        # interface" and "uses unknown trait" are non-ignorable in PHPStan; PhpStanAnalyser drops those when
+        # the symbol resolves to a package in composer.lock.
         - identifier: class.notFound
         - identifier: interface.notFound
         - identifier: trait.notFound
