@@ -9,6 +9,7 @@ use App\Jobs\Scan\DetectStack;
 use App\Jobs\Scan\FetchRepository;
 use App\Jobs\Scan\NormaliseFindings;
 use App\Jobs\Scan\PreflightCheck;
+use App\Jobs\Scan\ProfileRepository;
 use App\Jobs\Scan\RunAnalysers;
 use App\Jobs\Scan\RunSlopHeuristics;
 use App\Jobs\Scan\SynthesisePrompts;
@@ -33,6 +34,7 @@ final class ScanPipeline
             new DetectStack($scan),
             new RunAnalysers($scan),
             new RunSlopHeuristics($scan),
+            new ProfileRepository($scan),
             new NormaliseFindings($scan),
             new CalculateSlopScore($scan),
             new SynthesisePrompts($scan),

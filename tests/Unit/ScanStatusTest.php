@@ -10,7 +10,7 @@ test('complete and failed are the only terminal statuses', function () {
 
 test('the pipeline order matches the brief', function () {
     expect(array_map(fn (ScanStatus $s) => $s->value, ScanStatus::pipeline()))->toBe([
-        'queued', 'fetching', 'preflight', 'detecting', 'analysing', 'heuristics',
+        'queued', 'fetching', 'preflight', 'detecting', 'analysing', 'heuristics', 'profiling',
         'normalising', 'scoring', 'synthesising', 'complete',
     ]);
 });

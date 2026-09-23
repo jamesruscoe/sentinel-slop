@@ -74,7 +74,7 @@ test('a scan runs through the pipeline, stores results and deletes its files', f
         ->and(is_dir($this->storage.'/'.$scan->uuid))->toBeFalse();
 
     $statuses = collect(Event::dispatched(ScanProgressed::class))->map(fn (array $args) => $args[0]->scan->status->value)->unique()->values()->all();
-    expect($statuses)->toBe(['fetching', 'preflight', 'detecting', 'analysing', 'heuristics', 'normalising', 'scoring', 'synthesising', 'complete']);
+    expect($statuses)->toBe(['fetching', 'preflight', 'detecting', 'analysing', 'heuristics', 'profiling', 'normalising', 'scoring', 'synthesising', 'complete']);
     Event::assertDispatched(ScanCompleted::class);
     Event::assertNotDispatched(ScanFailed::class);
 });

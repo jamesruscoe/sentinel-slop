@@ -1,0 +1,1072 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Scanning\Profile;
+
+use App\Scanning\Data\FindingCollection;
+use App\Scanning\Data\Stack;
+use App\Scanning\Detect\DependencyIndex;
+
+/**
+ * Computes the RepositoryProfile from the file tree alone (plus jscpd's
+ * pair findings for duplication clusters). No analyser, no execution, no
+ * framework. See RepositoryProfile for the sections.
+ *
+ * @phpstan-import-type FileFact from SourceInventory
+ *
+ * @phpstan-type Manifests array{composer: array<string, true>, composer_dev: array<string, true>, composer_all: array<string, true>, npm: array<string, true>, npm_dev: array<string, true>, npm_all: array<string, true>, python: list<string>}
+ */
+final class RepositoryProfiler
+{
+    private const TEST_FRAMEWORKS = ['phpunit', 'pest', 'jest', 'vitest', 'mocha', 'jasmine', 'cypress', 'playwright', 'pytest', 'rspec', 'minitest', 'junit', 'xunit', 'nunit', 'karma', 'ava', 'tap', 'unittest'];
+
+    /** Runtime packages that are tooling and never imported from code. */
+    private const TOOLING_PACKAGES = ['laravel/tinker', 'laravel/ui', 'laravel/sail', 'laravel/pail', 'laravel/pint', 'laravel/boost', 'laravel/breeze', 'laravel/telescope', 'laravel/horizon', 'laravel/pulse', 'laravel/octane', 'laravel/envoy', 'laravel/dusk', 'barryvdh/laravel-debugbar', 'barryvdh/laravel-ide-helper', 'nunomaduro/collision', 'spatie/laravel-ignition', 'filp/whoops'];
+
+    public function __construct(private readonly ProfileConfig $config = new ProfileConfig) {}
+
+    public function profile(string $repoPath, Stack $stack, ?FindingCollection $jscpd = null): RepositoryProfile
+    {
+        $inventory = SourceInventory::build($repoPath);
+        $all = $inventory->files;
+        $source = $inventory->source();
+        $graph = ImportGraph::build($repoPath, $source);
+        $index = DependencyIndex::build($repoPath);
+        $manifests = $this->manifests($repoPath);
+
+        $logging = $this->logging($source, $graph, $manifests);
+        $validation = $this->validation($source, $graph, $manifests);
+        $errors = $this->errors($source, $stack);
+        $config = $this->config($source);
+        $tests = $this->tests($source, $all, $graph, $stack, $manifests);
+        $areas = $this->areas($all, $source, $logging['by_file'], $tests['linked']);
+        $features = $this->features($all, $graph);
+        $duplication = $this->duplication($jscpd);
+        $dependencies = $this->dependencies($source, $index, $manifests);
+        $cohesion = $this->cohesion($all);
+        $documentation = $this->documentation($all, $areas);
+        $summary = $this->summary($all, $source, $stack);
+
+        $data = [
+            'summary' => $summary,
+            'areas' => $areas,
+            'largest_files' => $this->largestFiles($source),
+            'largest_functions' => $this->largestFunctions($source),
+            'features' => $features,
+            'duplication' => $duplication,
+            'tests' => array_diff_key($tests, ['linked' => true]),
+            'logging' => array_diff_key($logging, ['by_file' => true]),
+            'validation' => $validation,
+            'errors' => $errors,
+            'config' => $config,
+            'dependencies' => $dependencies,
+            'cohesion' => $cohesion,
+            'documentation' => $documentation,
+        ];
+        $data['observations'] = $this->observations($data);
+
+        return new RepositoryProfile($data);
+    }
+
+    /**
+     * @param  list<FileFact>  $all
+     * @param  list<FileFact>  $source
+     * @return array<string, mixed>
+     */
+    private function summary(array $all, array $source, Stack $stack): array
+    {
+        $families = [];
+        $tests = 0;
+        $codeLines = 0;
+        $commentLines = 0;
+        $depth = 0;
+        foreach ($source as $file) {
+            $families[(string) $file['family']] = ($families[(string) $file['family']] ?? 0) + 1;
+            if ($file['is_test']) {
+                $tests++;
+            }
+            $codeLines += $file['code_lines'];
+            $commentLines += $file['comment_lines'];
+            $depth = max($depth, $file['depth']);
+        }
+        arsort($families);
+
+        return [
+            'files' => count($all),
+            'source_files' => count($source) - $tests,
+            'test_files' => $tests,
+            'code_lines' => $codeLines,
+            'comment_lines' => $commentLines,
+            'comment_density' => $codeLines > 0 ? round($commentLines / $codeLines * 100, 1) : 0.0,
+            'families' => $families,
+            'assessed_families' => array_values(array_filter(array_keys($families), fn (string $f) => LanguagePatterns::isAssessed($f))),
+            'unassessed_families' => array_values(array_filter(array_keys($families), fn (string $f) => ! LanguagePatterns::isAssessed($f))),
+            'max_depth' => $depth,
+            'frameworks' => $stack->frameworks,
+        ];
+    }
+
+    /**
+     * @param  list<FileFact>  $source
+     * @param  Manifests  $manifests
+     * @return array{by_file: array<string, string>, files_logging: int, direct: int, via_wrapper: int, mechanisms: list<string>, wrapper_files: list<string>, by_family: array<string, array{files_logging: int, direct: int, via_wrapper: int, source_files: int, mechanisms: list<string>}>}
+     */
+    private function logging(array $source, ImportGraph $graph, array $manifests): array
+    {
+        $direct = [];
+        $mechanisms = [];
+        $byPath = [];
+        foreach ($source as $file) {
+            $byPath[$file['path']] = $file;
+        }
+
+        foreach ($source as $file) {
+            $family = (string) $file['family'];
+            if ($file['signals']['logging_call'] > 0) {
+                $direct[$file['path']] = true;
+                $mechanisms[$family][$family === 'js' ? 'console/logger calls' : 'logging calls'] = true;
+            }
+            foreach ($family === 'php' ? $file['references'] : $file['imports'] as $reference) {
+                if (self::isLoggerReference($family, $reference)) {
+                    $direct[$file['path']] = true;
+                    $mechanisms[$family][self::loggerLabel($family, $reference)] = true;
+                }
+            }
+        }
+
+        // A file that does not log itself still logs when it imports (within wrapper_hops) a non-UI
+        // repository file that does: a helper, service or module wrapping the logger. Importing a page
+        // or component that happens to call console.error is not that.
+        $byFile = [];
+        $reachCounts = [];
+        /** @var array<string, array{files_logging: int, direct: int, via_wrapper: int, source_files: int, mechanisms: list<string>}> $byFamily */
+        $byFamily = [];
+        foreach ($source as $file) {
+            $family = (string) $file['family'];
+            $counts = $byFamily[$family] ?? ['files_logging' => 0, 'direct' => 0, 'via_wrapper' => 0, 'source_files' => 0, 'mechanisms' => []];
+            $counts['source_files']++;
+            if (isset($direct[$file['path']])) {
+                $byFile[$file['path']] = 'direct';
+                $counts['direct']++;
+                $counts['files_logging']++;
+            } else {
+                foreach ($graph->reachable($file['path'], $this->config->wrapperHops) as $reached) {
+                    if (isset($direct[$reached]) && ! in_array($byPath[$reached]['kind'] ?? 'code', Naming::UI_KINDS, true)) {
+                        $byFile[$file['path']] = 'wrapper:'.$reached;
+                        $reachCounts[$reached] = ($reachCounts[$reached] ?? 0) + 1;
+                        $counts['via_wrapper']++;
+                        $counts['files_logging']++;
+
+                        break;
+                    }
+                }
+            }
+            $byFamily[$family] = $counts;
+        }
+        arsort($reachCounts);
+        $viaWrapper = 0;
+        $labels = [];
+        foreach ($byFamily as $family => $counts) {
+            $byFamily[$family]['mechanisms'] = array_keys($mechanisms[$family] ?? []);
+            $viaWrapper += $counts['via_wrapper'];
+            foreach (array_keys($mechanisms[$family] ?? []) as $label) {
+                $labels[] = $family.': '.$label;
+            }
+        }
+
+        foreach (['monolog/monolog' => 'monolog', 'sentry/sentry-laravel' => 'sentry', 'sentry/sentry' => 'sentry', 'bugsnag/bugsnag-laravel' => 'bugsnag', 'rollbar/rollbar-laravel' => 'rollbar'] as $package => $label) {
+            if (isset($manifests['composer_all'][$package])) {
+                $labels[] = $label.' (declared)';
+            }
+        }
+        foreach (LanguagePatterns::JS_LOGGER_PACKAGES as $package) {
+            if (isset($manifests['npm_all'][$package])) {
+                $labels[] = $package.' (declared)';
+            }
+        }
+
+        return [
+            'by_file' => $byFile,
+            'files_logging' => count($byFile),
+            'direct' => count($direct),
+            'via_wrapper' => $viaWrapper,
+            'mechanisms' => $labels,
+            'wrapper_files' => array_slice(array_keys($reachCounts), 0, 3),
+            'by_family' => $byFamily,
+        ];
+    }
+
+    private static function isLoggerReference(string $family, string $reference): bool
+    {
+        return match ($family) {
+            // A class named ...Logger, ...Logging or Log(Service|Manager|Facade|Helper) is a logger; a class merely
+            // ending in Log (CareLog, AuditLog, ActivityLog) is usually a model and is NOT counted.
+            'php' => in_array(ltrim($reference, chr(92)), LanguagePatterns::PHP_LOGGER_TYPES, true) || preg_match('/(?:^|\\\\)(?:[A-Za-z]*(?:Logger|Logging)(?:Interface|Service|Manager|Facade|Helper)?|Log(?:Service|Manager|Facade|Helper))$/', $reference) === 1,
+            'js' => in_array(self::npmPackageOf($reference), LanguagePatterns::JS_LOGGER_PACKAGES, true) || preg_match('~(?:^|/)(?:[A-Za-z-]*logger|logging|log)(?:\.[jt]s)?$~i', $reference) === 1,
+            'python' => in_array(explode('.', $reference)[0], LanguagePatterns::PYTHON_LOGGER_MODULES, true),
+            'go' => in_array($reference, ['log', 'log/slog', 'go.uber.org/zap', 'github.com/sirupsen/logrus', 'github.com/rs/zerolog', 'github.com/rs/zerolog/log'], true),
+            'java' => str_starts_with($reference, 'org.slf4j') || str_starts_with($reference, 'java.util.logging') || str_starts_with($reference, 'org.apache.logging') || str_starts_with($reference, 'timber.log') || str_starts_with($reference, 'android.util.Log'),
+            'csharp' => str_starts_with($reference, 'Microsoft.Extensions.Logging') || str_starts_with($reference, 'Serilog') || str_starts_with($reference, 'NLog'),
+            default => false,
+        };
+    }
+
+    private static function loggerLabel(string $family, string $reference): string
+    {
+        return match ($family) {
+            'php' => in_array(ltrim($reference, chr(92)), LanguagePatterns::PHP_LOGGER_TYPES, true) ? ltrim($reference, chr(92)) : 'logger-named class '.substr(strrchr($reference, chr(92)) ?: chr(92).$reference, 1),
+            'js' => self::npmPackageOf($reference) !== '' && ! str_starts_with($reference, '.') && ! str_starts_with($reference, '@/') ? self::npmPackageOf($reference) : 'local logger module',
+            default => $reference,
+        };
+    }
+
+    public static function familyName(string $family): string
+    {
+        return match ($family) {
+            'php' => 'PHP',
+            'js' => 'JavaScript/TypeScript',
+            'python' => 'Python',
+            'ruby' => 'Ruby',
+            'go' => 'Go',
+            'java' => 'Java/Kotlin',
+            'csharp' => 'C#',
+            'rust' => 'Rust',
+            'swift' => 'Swift',
+            default => $family,
+        };
+    }
+
+    private static function npmPackageOf(string $specifier): string
+    {
+        if (str_starts_with($specifier, '.') || str_starts_with($specifier, '/') || str_starts_with($specifier, '@/') || str_starts_with($specifier, '~')) {
+            return '';
+        }
+        $parts = explode('/', $specifier);
+
+        return str_starts_with($specifier, '@') && count($parts) > 1 ? $parts[0].'/'.$parts[1] : $parts[0];
+    }
+
+    /**
+     * @param  list<FileFact>  $source
+     * @param  Manifests  $manifests
+     * @return array<string, mixed>
+     */
+    private function validation(array $source, ImportGraph $graph, array $manifests): array
+    {
+        $mechanismFiles = [];
+        $callSites = 0;
+        $formRequests = [];
+        $libraries = [];
+        $byPath = [];
+        foreach ($source as $file) {
+            $byPath[$file['path']] = $file;
+        }
+
+        foreach ($source as $file) {
+            if ($file['is_test']) {
+                continue;
+            }
+            if ($file['signals']['validation_mechanism'] > 0) {
+                $mechanismFiles[$file['path']] = true;
+                if ($file['family'] === 'php' && $file['kind'] === 'request') {
+                    $formRequests[] = $file['path'];
+                }
+            }
+            $callSites += $file['signals']['validation_call'];
+        }
+
+        foreach (['spatie/laravel-data', 'respect/validation', 'symfony/validator', 'rakit/validation', 'illuminate/validation', 'laravel/framework'] as $package) {
+            if (isset($manifests['composer_all'][$package])) {
+                $libraries[] = $package;
+            }
+        }
+        foreach (LanguagePatterns::VALIDATION_PACKAGES['js'] as $package) {
+            if (isset($manifests['npm_all'][$package])) {
+                $libraries[] = $package;
+            }
+        }
+        foreach ($manifests['python'] as $package) {
+            if (in_array($package, LanguagePatterns::VALIDATION_PACKAGES['python'], true)) {
+                $libraries[] = $package;
+            }
+        }
+
+        $inputFiles = [];
+        $withoutReference = [];
+        foreach ($source as $file) {
+            if ($file['is_test'] || $file['signals']['input_read'] === 0) {
+                continue;
+            }
+            $inputFiles[] = $file['path'];
+            if ($file['signals']['validation_call'] > 0 || $file['signals']['validation_mechanism'] > 0) {
+                continue;
+            }
+            foreach ($graph->reachable($file['path'], 1) as $reached) {
+                if (isset($mechanismFiles[$reached])) {
+                    continue 2;
+                }
+            }
+            $withoutReference[] = $file['path'];
+        }
+
+        return [
+            'mechanism_files' => count($mechanismFiles),
+            'form_request_classes' => count($formRequests),
+            'call_sites' => $callSites,
+            'libraries' => array_values(array_unique($libraries)),
+            'input_files' => count($inputFiles),
+            'input_files_without_validation_reference' => $withoutReference,
+            'assessable' => $this->assessable($source),
+        ];
+    }
+
+    /**
+     * @param  list<FileFact>  $source
+     * @return array<string, mixed>
+     */
+    private function errors(array $source, Stack $stack): array
+    {
+        $try = 0;
+        $catch = 0;
+        $external = 0;
+        $externalFiles = [];
+        $unguarded = [];
+        $handlers = [];
+
+        foreach ($source as $file) {
+            if ($file['is_test']) {
+                continue;
+            }
+            $try += $file['signals']['try'];
+            $catch += $file['signals']['catch'];
+            if ($file['signals']['global_handler'] > 0) {
+                $handlers[] = $file['path'];
+            }
+            if ($file['signals']['external_call'] === 0) {
+                continue;
+            }
+            $external += $file['signals']['external_call'];
+            $guarded = $file['signals']['catch'] > 0 || $file['signals']['guard'] > 0;
+            $externalFiles[] = ['path' => $file['path'], 'sites' => $file['signals']['external_call'], 'guarded' => $guarded];
+            if (! $guarded) {
+                $unguarded[] = $file['path'].' ('.$file['signals']['external_call'].')';
+            }
+        }
+        usort($externalFiles, fn (array $a, array $b) => $b['sites'] <=> $a['sites']);
+
+        $frameworkHandler = array_values(array_intersect($stack->frameworks, ['laravel', 'symfony', 'django', 'flask', 'fastapi', 'rails', 'express', 'nestjs', 'spring', 'aspnet', 'nuxt', 'next', 'vue', 'angular', 'react']));
+
+        return [
+            'try_sites' => $try,
+            'catch_sites' => $catch,
+            'external_sites' => $external,
+            'external_files' => array_slice($externalFiles, 0, $this->config->topCount),
+            'external_files_unguarded' => $unguarded,
+            'global_handler_files' => $handlers,
+            'framework_handler' => $frameworkHandler,
+        ];
+    }
+
+    /**
+     * @param  list<FileFact>  $source
+     * @return array<string, mixed>
+     */
+    private function config(array $source): array
+    {
+        $sites = 0;
+        $files = [];
+        $configSites = 0;
+        foreach ($source as $file) {
+            $configSites += $file['signals']['config_read'];
+            if ($file['is_test'] || $file['is_config_path'] || in_array($file['kind'], ['seeder', 'factory', 'migration', 'script', 'infra', 'test'], true) || $file['signals']['env_read'] === 0) {
+                continue;
+            }
+            $sites += $file['signals']['env_read'];
+            $files[] = ['path' => $file['path'], 'sites' => $file['signals']['env_read']];
+        }
+        usort($files, fn (array $a, array $b) => $b['sites'] <=> $a['sites']);
+
+        return [
+            'env_sites_outside_config' => $sites,
+            'env_files_outside_config' => $files,
+            'config_sites' => $configSites,
+        ];
+    }
+
+    /**
+     * @param  list<FileFact>  $source
+     * @param  list<FileFact>  $all
+     * @param  Manifests  $manifests
+     * @return array<string, mixed>
+     */
+    private function tests(array $source, array $all, ImportGraph $graph, Stack $stack, array $manifests): array
+    {
+        $testFiles = array_values(array_filter($source, fn (array $f) => $f['is_test']));
+        $sourceFiles = array_values(array_filter($source, fn (array $f) => ! $f['is_test']));
+
+        $areaOf = [];
+        $stemsByArea = [];
+        foreach ($sourceFiles as $file) {
+            $areaOf[$file['path']] = $file['area'];
+            if ($file['stem'] !== null) {
+                $stemsByArea[$file['area']][$file['stem']] = true;
+            }
+        }
+
+        /** @var array<string, array<string, string>> $linked  area => test path => via */
+        $linked = [];
+        foreach ($testFiles as $test) {
+            // Mirrored path: tests/Unit/Services/DogServiceTest.php mirrors app/Services.
+            $segments = array_slice(explode('/', $test['path']), 0, -1);
+            $tail = array_map('strtolower', array_values(array_filter($segments, fn (string $s) => ! in_array(strtolower($s), ['tests', 'test', '__tests__', 'spec', 'specs', 'unit', 'feature', 'integration', 'e2e', 'functional', 'browser'], true))));
+            foreach (array_keys($stemsByArea + array_flip(array_unique(array_values($areaOf)))) as $area) {
+                $areaSegments = array_map('strtolower', explode('/', (string) $area));
+                if ($tail !== [] && array_slice($areaSegments, -count($tail)) === $tail) {
+                    $linked[$area][$test['path']] = 'path';
+                } elseif ($tail !== [] && in_array(end($areaSegments), $tail, true)) {
+                    $linked[$area][$test['path']] = 'path';
+                }
+            }
+            // Shared stem: BookingServiceTest links every area with a booking file.
+            if ($test['stem'] !== null) {
+                foreach ($stemsByArea as $area => $stems) {
+                    if (isset($stems[$test['stem']])) {
+                        $linked[$area][$test['path']] = 'stem';
+                    }
+                }
+            }
+            // Imports/references from the test into the area.
+            foreach ($graph->reachable($test['path'], 1) as $reached) {
+                if (isset($areaOf[$reached])) {
+                    $linked[$areaOf[$reached]][$test['path']] = 'import';
+                }
+            }
+        }
+
+        $frameworks = array_values(array_intersect(self::TEST_FRAMEWORKS, array_map('strtolower', $stack->tooling)));
+        foreach (array_keys($manifests['composer_all'] + $manifests['npm_all']) as $package) {
+            foreach (self::TEST_FRAMEWORKS as $framework) {
+                if (str_contains(strtolower((string) $package), $framework)) {
+                    $frameworks[] = $framework;
+                }
+            }
+        }
+        foreach ($manifests['python'] as $package) {
+            if (in_array($package, ['pytest', 'nose', 'nose2', 'hypothesis'], true)) {
+                $frameworks[] = $package;
+            }
+        }
+        $frameworks = array_values(array_unique($frameworks));
+
+        return [
+            'test_files' => count($testFiles),
+            'source_files' => count($sourceFiles),
+            'ratio' => count($sourceFiles) > 0 ? round(count($testFiles) / count($sourceFiles), 2) : 0.0,
+            'frameworks' => $frameworks,
+            'searched' => 'tests/, test/, __tests__/, spec/, e2e/, *.test.*, *.spec.*, test_*.py, *_test.go, *Test.php, *Test.java',
+            'linked' => $linked,
+        ];
+    }
+
+    /**
+     * @param  list<FileFact>  $all
+     * @param  list<FileFact>  $source
+     * @param  array<string, string>  $loggingByFile
+     * @param  array<string, array<string, string>>  $linkedTests
+     * @return list<array<string, mixed>>
+     */
+    private function areas(array $all, array $source, array $loggingByFile, array $linkedTests): array
+    {
+        /** @var array<string, array<string, mixed>> $areas */
+        $areas = [];
+        foreach ($all as $file) {
+            $area = $file['area'];
+            $row = $areas[$area] ?? [
+                'area' => $area, 'files' => 0, 'source_files' => 0, 'test_files' => 0, 'code_lines' => 0, 'comment_lines' => 0, 'max_depth' => 0,
+                'kinds' => [], 'families' => [], 'signals' => array_fill_keys(SourceInventory::SIGNALS, 0),
+                'logging_files' => 0, 'logging_via_wrapper' => 0, 'input_files' => 0, 'external_files' => 0, 'external_unguarded_files' => 0, 'env_files' => 0,
+                'largest_files' => [], 'stems' => [],
+            ];
+            $row['files']++;
+            $row['code_lines'] += $file['code_lines'];
+            $row['comment_lines'] += $file['comment_lines'];
+            $row['max_depth'] = max($row['max_depth'], $file['depth']);
+            $row['kinds'][$file['kind']] = ($row['kinds'][$file['kind']] ?? 0) + 1;
+            if ($file['family'] !== null) {
+                $row['families'][$file['family']] = ($row['families'][$file['family']] ?? 0) + 1;
+                if ($file['is_test']) {
+                    $row['test_files']++;
+                } else {
+                    $row['source_files']++;
+                    if ($file['stem'] !== null) {
+                        $row['stems'][$file['stem']] = true;
+                    }
+                    foreach (SourceInventory::SIGNALS as $signal) {
+                        $row['signals'][$signal] += $file['signals'][$signal];
+                    }
+                    if (isset($loggingByFile[$file['path']])) {
+                        $row['logging_files']++;
+                        if (str_starts_with($loggingByFile[$file['path']], 'wrapper:')) {
+                            $row['logging_via_wrapper']++;
+                        }
+                    }
+                    if ($file['signals']['input_read'] > 0) {
+                        $row['input_files']++;
+                    }
+                    if ($file['signals']['external_call'] > 0) {
+                        $row['external_files']++;
+                        if ($file['signals']['catch'] === 0 && $file['signals']['guard'] === 0) {
+                            $row['external_unguarded_files']++;
+                        }
+                    }
+                    if ($file['signals']['env_read'] > 0 && ! $file['is_config_path']) {
+                        $row['env_files']++;
+                    }
+                    $row['largest_files'][] = ['path' => $file['path'], 'code_lines' => $file['code_lines']];
+                }
+            }
+            $areas[$area] = $row;
+        }
+
+        $rows = [];
+        foreach ($areas as $row) {
+            arsort($row['kinds']);
+            arsort($row['families']);
+            usort($row['largest_files'], fn (array $a, array $b) => $b['code_lines'] <=> $a['code_lines']);
+            $row['largest_files'] = array_slice($row['largest_files'], 0, 3);
+            $row['comment_density'] = $row['code_lines'] > 0 ? round($row['comment_lines'] / $row['code_lines'] * 100, 1) : 0.0;
+            $row['distinct_stems'] = count($row['stems']);
+            unset($row['stems']);
+            $row['service_like'] = self::isServiceLike($row);
+            $row['input_like'] = self::shareOfKinds($row['kinds'], Naming::INPUT_KINDS) >= 0.5;
+            $row['logic'] = $row['source_files'] > 0 && self::shareOfKinds($row['kinds'], Naming::LOGIC_KINDS) >= 0.5;
+            $row['assessed'] = $row['families'] !== [] && LanguagePatterns::isAssessed((string) array_key_first($row['families']));
+            $tests = $linkedTests[$row['area']] ?? [];
+            $via = [];
+            foreach ($tests as $how) {
+                $via[$how] = ($via[$how] ?? 0) + 1;
+            }
+            $row['linked_tests'] = count($tests);
+            $row['linked_tests_via'] = $via;
+            $row['linked_test_examples'] = array_slice(array_keys($tests), 0, 3);
+            $rows[] = $row;
+        }
+        usort($rows, fn (array $a, array $b) => $b['code_lines'] <=> $a['code_lines']);
+
+        return $rows;
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     */
+    private static function isServiceLike(array $row): bool
+    {
+        $name = strtolower((string) (strrchr('/'.(string) $row['area'], '/') ?: ''));
+        $name = ltrim($name, '/');
+        if (in_array($name, ['services', 'jobs', 'listeners', 'actions', 'commands', 'domain', 'usecases', 'use-cases', 'handlers', 'repositories', 'application'], true)) {
+            return true;
+        }
+
+        return self::shareOfKinds((array) $row['kinds'], Naming::SERVICE_KINDS) >= 0.5;
+    }
+
+    /**
+     * @param  array<string, int>  $kinds
+     * @param  list<string>  $wanted
+     */
+    private static function shareOfKinds(array $kinds, array $wanted): float
+    {
+        $total = array_sum($kinds);
+        if ($total === 0) {
+            return 0.0;
+        }
+        $matched = 0;
+        foreach ($kinds as $kind => $count) {
+            if (in_array($kind, $wanted, true)) {
+                $matched += $count;
+            }
+        }
+
+        return $matched / $total;
+    }
+
+    /**
+     * @param  list<FileFact>  $source
+     * @return list<array{path: string, code_lines: int}>
+     */
+    private function largestFiles(array $source): array
+    {
+        $files = [];
+        foreach ($source as $f) {
+            if (! $f['is_test']) {
+                $files[] = ['path' => $f['path'], 'code_lines' => $f['code_lines']];
+            }
+        }
+        usort($files, fn (array $a, array $b) => $b['code_lines'] <=> $a['code_lines']);
+
+        return array_slice($files, 0, $this->config->topCount);
+    }
+
+    /**
+     * @param  list<FileFact>  $source
+     * @return list<array{path: string, name: string, line: int, length: int, method: string}>
+     */
+    private function largestFunctions(array $source): array
+    {
+        $functions = [];
+        foreach ($source as $file) {
+            if ($file['is_test']) {
+                continue;
+            }
+            foreach ($file['functions'] as $function) {
+                $functions[] = $function + ['path' => $file['path'], 'method' => match ($file['family']) {
+                    'php' => 'ast',
+                    'python' => 'indentation',
+                    default => 'brace matching',
+                }];
+            }
+        }
+        usort($functions, fn (array $a, array $b) => $b['length'] <=> $a['length']);
+
+        return array_map(fn (array $f) => ['path' => $f['path'], 'name' => $f['name'], 'line' => $f['line'], 'length' => $f['length'], 'method' => $f['method']], array_slice($functions, 0, $this->config->topCount));
+    }
+
+    /**
+     * @param  list<FileFact>  $all
+     * @return list<array<string, mixed>>
+     */
+    private function features(array $all, ImportGraph $graph): array
+    {
+        /** @var array<string, array{stem: string, files: int, code_lines: int, directories: array<string, true>, kinds: array<string, int>, paths: list<string>}> $clusters */
+        $clusters = [];
+        foreach ($all as $file) {
+            if ($file['stem'] === null || $file['is_test'] || in_array($file['kind'], ['asset', 'doc', 'config', 'infra', 'migration', 'script'], true)) {
+                continue;
+            }
+            $cluster = $clusters[$file['stem']] ?? ['stem' => $file['stem'], 'files' => 0, 'code_lines' => 0, 'directories' => [], 'kinds' => [], 'paths' => []];
+            $cluster['files']++;
+            $cluster['code_lines'] += $file['code_lines'];
+            $cluster['directories'][dirname($file['path'])] = true;
+            $cluster['kinds'][$file['kind']] = ($cluster['kinds'][$file['kind']] ?? 0) + 1;
+            $cluster['paths'][] = $file['path'];
+            $clusters[$file['stem']] = $cluster;
+        }
+
+        $rows = [];
+        foreach ($clusters as $cluster) {
+            if ($cluster['files'] < $this->config->minFeatureFiles) {
+                continue;
+            }
+            $members = array_fill_keys($cluster['paths'], true);
+            $connected = [];
+            foreach ($cluster['paths'] as $path) {
+                foreach ([...$graph->importsOf($path), ...$graph->importedBy($path)] as $other) {
+                    if (! isset($members[$other])) {
+                        $connected[$other] = true;
+                    }
+                }
+            }
+            arsort($cluster['kinds']);
+            $rows[] = [
+                'stem' => $cluster['stem'],
+                'files' => $cluster['files'],
+                'directories' => count($cluster['directories']),
+                'code_lines' => $cluster['code_lines'],
+                'kinds' => $cluster['kinds'],
+                'connected_files' => count($connected),
+                'examples' => array_slice($cluster['paths'], 0, 6),
+            ];
+        }
+        usort($rows, fn (array $a, array $b) => [$b['files'], $b['code_lines']] <=> [$a['files'], $a['code_lines']]);
+
+        return array_slice($rows, 0, 15);
+    }
+
+    /**
+     * Clusters from jscpd's pair findings: each pair joins its two locations
+     * in a union-find, so A~B and A~C become {A, B, C}.
+     *
+     * @return array<string, mixed>
+     */
+    private function duplication(?FindingCollection $jscpd): array
+    {
+        if ($jscpd === null || $jscpd->count() === 0) {
+            return ['clusters' => [], 'pairs' => 0, 'total_duplicated_lines' => 0, 'superseded_pairs' => []];
+        }
+
+        $parent = [];
+        $find = function (string $key) use (&$parent, &$find): string {
+            $parent[$key] ??= $key;
+
+            return $parent[$key] === $key ? $key : ($parent[$key] = $find($parent[$key]));
+        };
+        $union = function (string $a, string $b) use (&$parent, $find): void {
+            $parent[$find($a)] = $find($b);
+        };
+
+        $lines = [];
+        $pairs = [];
+        $totalLines = 0;
+        foreach ($jscpd as $finding) {
+            if ($finding->ruleId !== 'duplicate-block' || preg_match('/^(\d+) duplicated lines also found in (.+):(\d+)\.$/', $finding->message, $m) !== 1) {
+                continue;
+            }
+            $here = $finding->filePath.':'.($finding->line ?? 0);
+            $there = $m[2].':'.$m[3];
+            $union($here, $there);
+            $lines[$here] = max($lines[$here] ?? 0, (int) $m[1]);
+            $lines[$there] = max($lines[$there] ?? 0, (int) $m[1]);
+            $totalLines += (int) $m[1];
+            $pairs[] = ['a' => $here, 'b' => $there, 'finding' => $finding];
+        }
+
+        $groups = [];
+        foreach (array_keys($lines) as $key) {
+            $groups[$find($key)][] = $key;
+        }
+
+        $clusters = [];
+        foreach ($groups as $members) {
+            sort($members);
+            $block = max(array_map(fn (string $m) => $lines[$m], $members));
+            $clusters[] = [
+                'occurrences' => count($members),
+                'lines' => $block,
+                'lines_saved' => $block * (count($members) - 1),
+                'files' => count(array_unique(array_map(fn (string $m) => explode(':', $m)[0], $members))),
+                'locations' => $members,
+            ];
+        }
+        usort($clusters, fn (array $a, array $b) => [$b['lines_saved'], $b['occurrences']] <=> [$a['lines_saved'], $a['occurrences']]);
+
+        $reportable = array_filter($clusters, fn (array $c) => $c['occurrences'] >= $this->config->minClusterOccurrences || $c['lines_saved'] >= $this->config->minClusterSavedLines);
+        $covered = [];
+        foreach ($reportable as $cluster) {
+            foreach ($cluster['locations'] as $location) {
+                $covered[$location] = true;
+            }
+        }
+        $superseded = [];
+        foreach ($pairs as $pair) {
+            if (isset($covered[$pair['a']], $covered[$pair['b']])) {
+                $superseded[] = $pair['a'];
+            }
+        }
+
+        return [
+            'clusters' => array_slice($clusters, 0, $this->config->topCount),
+            'reportable' => array_values($reportable),
+            'pairs' => count($pairs),
+            'total_duplicated_lines' => $totalLines,
+            'superseded_pairs' => array_values(array_unique($superseded)),
+        ];
+    }
+
+    /**
+     * @param  list<FileFact>  $source
+     * @param  Manifests  $manifests
+     * @return array<string, mixed>
+     */
+    private function dependencies(array $source, DependencyIndex $index, array $manifests): array
+    {
+        $composerUse = [];
+        $npmUse = [];
+        foreach ($source as $file) {
+            if ($file['family'] === 'php') {
+                foreach ($file['references'] as $reference) {
+                    $package = $index->resolvePhp($reference);
+                    if ($package !== null) {
+                        $composerUse[$package][$file['path']] = true;
+                    }
+                }
+            } elseif ($file['family'] === 'js') {
+                foreach ($file['imports'] as $import) {
+                    $package = self::npmPackageOf($import);
+                    if ($package !== '') {
+                        $npmUse[$package][$file['path']] = true;
+                    }
+                }
+            }
+        }
+
+        $singleUse = [];
+        $neverReferenced = [];
+        foreach (array_keys($manifests['composer']) as $package) {
+            $files = array_keys($composerUse[$package] ?? []);
+            if ($files === [] && $index->hasComposerLock && ! in_array($package, self::TOOLING_PACKAGES, true) && ! str_starts_with((string) $package, 'ext-') && $package !== 'php') {
+                $neverReferenced[] = 'composer:'.$package;
+            } elseif (count($files) > 0 && count($files) <= 2 && ! in_array($package, self::TOOLING_PACKAGES, true)) {
+                $singleUse[] = ['package' => 'composer:'.$package, 'files' => $files];
+            }
+        }
+        foreach (array_keys($manifests['npm']) as $package) {
+            if (self::isNpmTooling((string) $package)) {
+                continue;
+            }
+            $files = array_keys($npmUse[$package] ?? []);
+            if (count($files) > 0 && count($files) <= 2) {
+                $singleUse[] = ['package' => 'npm:'.$package, 'files' => $files];
+            } elseif ($files === []) {
+                $neverReferenced[] = 'npm:'.$package;
+            }
+        }
+
+        $usage = [];
+        foreach ($composerUse as $package => $files) {
+            $usage['composer:'.$package] = count($files);
+        }
+        foreach ($npmUse as $package => $files) {
+            if (isset($manifests['npm'][$package]) || isset($manifests['npm_all'][$package])) {
+                $usage['npm:'.$package] = count($files);
+            }
+        }
+        arsort($usage);
+
+        return [
+            'composer_direct' => count($manifests['composer']),
+            'composer_dev' => count($manifests['composer_dev']),
+            'npm_direct' => count($manifests['npm']),
+            'npm_dev' => count($manifests['npm_dev']),
+            'single_use' => $singleUse,
+            'never_referenced' => $neverReferenced,
+            'most_used' => array_slice($usage, 0, $this->config->topCount, true),
+        ];
+    }
+
+    private static function isNpmTooling(string $package): bool
+    {
+        foreach (['vite', 'tailwindcss', '@tailwindcss/', 'typescript', 'eslint', 'prettier', 'postcss', 'autoprefixer', 'sass', '@types/', '@vitejs/', 'laravel-vite-plugin', 'concurrently', 'vue-tsc', 'playwright', 'husky', 'lint-staged', '@rollup/', 'lightningcss', 'tw-animate-css', 'bootstrap', 'esbuild', 'webpack', 'babel', '@babel/', 'jest', 'vitest', 'cypress', 'nodemon', 'ts-node', 'tsx', 'rimraf', 'cross-env', 'dotenv-cli', 'npm-run-all', 'laravel-mix', 'axios'] as $prefix) {
+            if (str_starts_with($package, $prefix)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  list<FileFact>  $all
+     * @return array<string, mixed>
+     */
+    private function cohesion(array $all): array
+    {
+        /** @var array<string, array{directory: string, files: int, stems: array<string, true>, kinds: array<string, int>, examples: list<string>}> $directories */
+        $directories = [];
+        $hasChildren = [];
+        $grabBags = [];
+        foreach ($all as $file) {
+            if ($file['is_test'] || in_array($file['kind'], ['asset', 'doc', 'infra', 'migration'], true)) {
+                continue;
+            }
+            $dir = dirname($file['path']);
+            $dir = $dir === '.' ? '(root)' : $dir;
+            $row = $directories[$dir] ?? ['directory' => $dir, 'files' => 0, 'stems' => [], 'kinds' => [], 'examples' => []];
+            $row['files']++;
+            if ($file['stem'] !== null) {
+                $row['stems'][$file['stem']] = true;
+            }
+            $kind = Naming::kindFromName($file['path']) ?? 'unclassified';
+            $row['kinds'][$kind] = ($row['kinds'][$kind] ?? 0) + 1;
+            if (count($row['examples']) < 6) {
+                $row['examples'][] = basename($file['path']);
+            }
+            $directories[$dir] = $row;
+
+            $parent = dirname($dir);
+            while ($parent !== '.' && $parent !== '' && $parent !== '/') {
+                $hasChildren[$parent] = true;
+                $parent = dirname($parent);
+            }
+
+            if (in_array($file['kind'], ['helper'], true) && $file['code_lines'] >= $this->config->grabBagFileLines) {
+                $grabBags[] = ['path' => $file['path'], 'code_lines' => $file['code_lines']];
+            }
+        }
+
+        $large = [];
+        foreach ($directories as $dir => $row) {
+            if ($row['files'] < $this->config->minDumpingGroundFiles) {
+                continue;
+            }
+            arsort($row['kinds']);
+            $large[] = [
+                'directory' => $dir,
+                'files' => $row['files'],
+                'flat' => ! isset($hasChildren[$dir]),
+                'stem_diversity' => $row['files'] > 0 ? round(count($row['stems']) / $row['files'], 2) : 0.0,
+                'kinds' => $row['kinds'],
+                'examples' => $row['examples'],
+            ];
+        }
+        usort($large, fn (array $a, array $b) => $b['files'] <=> $a['files']);
+        usort($grabBags, fn (array $a, array $b) => $b['code_lines'] <=> $a['code_lines']);
+
+        return ['large_directories' => $large, 'grab_bag_files' => $grabBags];
+    }
+
+    /**
+     * @param  list<FileFact>  $all
+     * @param  list<array<string, mixed>>  $areas
+     * @return array<string, mixed>
+     */
+    private function documentation(array $all, array $areas): array
+    {
+        $readme = false;
+        $docs = false;
+        foreach ($all as $file) {
+            if (preg_match('/^readme(\.[a-z]+)?$/i', $file['path']) === 1) {
+                $readme = true;
+            }
+            if (str_starts_with(strtolower($file['path']), 'docs/')) {
+                $docs = true;
+            }
+        }
+
+        $sparse = [];
+        foreach ($areas as $area) {
+            if ($area['source_files'] >= 10 && $area['comment_density'] < 2.0) {
+                $sparse[] = $area['area'].' ('.$area['comment_density'].'%)';
+            }
+        }
+
+        return ['readme' => $readme, 'docs_directory' => $docs, 'sparse_areas' => $sparse];
+    }
+
+    /**
+     * @param  list<FileFact>  $source
+     */
+    private function assessable(array $source): bool
+    {
+        foreach ($source as $file) {
+            if (! $file['is_test'] && LanguagePatterns::isAssessed((string) $file['family'])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Plain sentences for the reviewer: signals that are worth knowing but
+     * not certain enough to be findings.
+     *
+     * @param  array<string, mixed>  $data
+     * @return list<string>
+     */
+    private function observations(array $data): array
+    {
+        $out = [];
+        $summary = $data['summary'];
+        $tests = $data['tests'];
+        $logging = $data['logging'];
+        $validation = $data['validation'];
+        $errors = $data['errors'];
+        $config = $data['config'];
+        $dependencies = $data['dependencies'];
+
+        if ($summary['unassessed_families'] !== []) {
+            $out[] = 'Absence checks do not run for '.implode(', ', $summary['unassessed_families']).' files; their counts in the area table are observations only.';
+        }
+        if ($tests['test_files'] === 0 && $tests['frameworks'] !== []) {
+            $out[] = 'A test framework is declared ('.implode(', ', $tests['frameworks']).') but no test files were found in '.$tests['searched'].'.';
+        }
+        $untestedUi = [];
+        $untestedLogic = [];
+        foreach ($data['areas'] as $area) {
+            if ($area['source_files'] >= $this->config->minAreaFilesForTests && $area['linked_tests'] === 0 && $area['test_files'] === 0) {
+                if ($area['logic']) {
+                    $untestedLogic[] = $area['area'].' ('.$area['source_files'].' files)';
+                } elseif (! in_array($area['area'], ['(root)', 'config', 'routes', 'database', 'database/migrations', 'public', 'docs'], true)) {
+                    $untestedUi[] = $area['area'].' ('.$area['source_files'].' files)';
+                }
+            }
+        }
+        if ($untestedUi !== []) {
+            $out[] = 'No test file links to these UI, data or scaffolding areas (not reported as findings): '.implode(', ', $untestedUi).'.';
+        }
+        foreach ((array) ($logging['by_family'] ?? []) as $family => $counts) {
+            $out[] = sprintf('%s: %d of %d files log (%d directly, %d through %s).', self::familyName((string) $family), $counts['files_logging'], $counts['source_files'], $counts['direct'], $counts['via_wrapper'],
+                $counts['via_wrapper'] > 0 ? 'another repository file, mostly '.implode(', ', array_slice($logging['wrapper_files'], 0, 2)) : 'a wrapper');
+        }
+        if ($validation['input_files_without_validation_reference'] !== [] && ($validation['mechanism_files'] > 0 || $validation['call_sites'] > 0)) {
+            $out[] = count($validation['input_files_without_validation_reference']).' of '.$validation['input_files'].' input-reading files reference no validation mechanism themselves (the request may be validated elsewhere): '.implode(', ', array_slice($validation['input_files_without_validation_reference'], 0, 5)).'.';
+        }
+        if ($errors['external_files_unguarded'] !== [] && ($errors['framework_handler'] !== [] || $errors['global_handler_files'] !== [])) {
+            $out[] = count($errors['external_files_unguarded']).' files make outbound calls with no try/catch or retry in the same file; a global exception handler exists ('.implode(', ', $errors['framework_handler'] !== [] ? $errors['framework_handler'] : $errors['global_handler_files']).'), so failures are caught but not handled locally: '.implode(', ', array_slice($errors['external_files_unguarded'], 0, 5)).'.';
+        }
+        if ($config['env_sites_outside_config'] > 0 && $config['env_sites_outside_config'] < $this->config->minEnvSites) {
+            $out[] = $config['env_sites_outside_config'].' direct environment read(s) outside config directories (below the reporting threshold).';
+        }
+        if ($dependencies['never_referenced'] !== []) {
+            $out[] = 'Declared but never referenced by namespace or import from any source file: '.implode(', ', array_slice($dependencies['never_referenced'], 0, 10)).'. A package wired through config strings, a service provider, CSS or Blade can be in use without such a reference, so this is a list to check, not a list to remove.';
+        }
+        if ($dependencies['single_use'] !== []) {
+            $out[] = count($dependencies['single_use']).' direct dependencies are imported from at most two files.';
+        }
+        foreach ($data['features'] as $feature) {
+            if ($feature['files'] >= 20 || $feature['directories'] >= 6) {
+                $out[] = sprintf('Feature "%s" spans %d files in %d directories (%s lines): %s.', $feature['stem'], $feature['files'], $feature['directories'], number_format($feature['code_lines']), implode(', ', array_map(fn ($k, $v) => "$v $k", array_keys($feature['kinds']), $feature['kinds'])));
+            }
+        }
+        foreach ($data['cohesion']['large_directories'] as $dir) {
+            $out[] = sprintf('%s holds %d files directly (%s, stem diversity %.2f): %s.', $dir['directory'], $dir['files'], $dir['flat'] ? 'flat' : 'with subdirectories', $dir['stem_diversity'], implode(', ', array_map(fn ($k, $v) => "$v $k", array_keys($dir['kinds']), $dir['kinds'])));
+        }
+        if ($data['documentation']['sparse_areas'] !== []) {
+            $out[] = 'Comment density under 2% in: '.implode(', ', $data['documentation']['sparse_areas']).'.';
+        }
+        if (! $data['documentation']['readme']) {
+            $out[] = 'No README at the repository root.';
+        }
+
+        return $out;
+    }
+
+    /**
+     * @return Manifests
+     */
+    private function manifests(string $repoPath): array
+    {
+        $composer = self::readJson($repoPath.'/composer.json');
+        $package = self::readJson($repoPath.'/package.json');
+        $python = [];
+        foreach (['requirements.txt', 'requirements/base.txt', 'requirements-dev.txt', 'pyproject.toml', 'Pipfile', 'setup.py', 'setup.cfg'] as $name) {
+            $file = $repoPath.'/'.$name;
+            if (is_file($file) && (filesize($file) ?: 0) < 256 * 1024) {
+                if (preg_match_all('/^\s*["\']?([A-Za-z][A-Za-z0-9_.-]*)/m', (string) file_get_contents($file), $m) > 0) {
+                    foreach ($m[1] as $name) {
+                        $python[strtolower(str_replace('_', '-', $name))] = true;
+                    }
+                }
+            }
+        }
+
+        $composerRequire = array_fill_keys(array_map('strval', array_keys((array) ($composer['require'] ?? []))), true);
+        $composerDev = array_fill_keys(array_map('strval', array_keys((array) ($composer['require-dev'] ?? []))), true);
+        $npm = array_fill_keys(array_map('strval', array_keys((array) ($package['dependencies'] ?? []))), true);
+        $npmDev = array_fill_keys(array_map('strval', array_keys((array) ($package['devDependencies'] ?? []))), true);
+
+        return [
+            'composer' => array_diff_key($composerRequire, ['php' => true]),
+            'composer_dev' => $composerDev,
+            'composer_all' => $composerRequire + $composerDev,
+            'npm' => $npm,
+            'npm_dev' => $npmDev,
+            'npm_all' => $npm + $npmDev,
+            'python' => array_keys($python),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function readJson(string $file): array
+    {
+        if (! is_file($file) || (filesize($file) ?: 0) > 512 * 1024) {
+            return [];
+        }
+        $decoded = json_decode((string) file_get_contents($file), true);
+
+        return is_array($decoded) ? $decoded : [];
+    }
+}

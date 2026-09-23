@@ -164,6 +164,36 @@ return [
     ],
 
     /*
+    |--------------------------------------------------------------------------
+    | Repository profile and absence checks
+    |--------------------------------------------------------------------------
+    | Thresholds for App\Scanning\Profile. Every absence check needs a minimum
+    | population before it can fire (see AbsenceChecks for what each check
+    | looks for and what makes it stay silent). Keys map onto ProfileConfig.
+    */
+    'profile' => [
+        'min_source_files_for_tests' => 20,
+        'min_area_files_for_tests' => 5,
+        'min_service_files_for_logging' => 8,
+        'min_source_files_for_logging' => 20,
+        'min_input_files_for_validation' => 3,
+        'min_env_sites' => 5,
+        'min_env_files' => 3,
+        'min_cluster_occurrences' => 3,
+        'min_cluster_saved_lines' => 100,
+        'high_cluster_saved_lines' => 200,
+        'min_dumping_ground_files' => 25,
+        'dumping_ground_stem_diversity' => 0.7,
+        'min_dumping_ground_kinds' => 3,
+        'min_external_sites_unguarded' => 5,
+        'grab_bag_file_lines' => 300,
+        'min_feature_files' => 3,
+        'top_count' => 10,
+        // How many import hops away a file may be from one that logs and still count as logging through a wrapper.
+        'wrapper_hops' => 2,
+    ],
+
+    /*
     | LLM synthesis. Provider and model map straight onto Prism.
     */
     /*

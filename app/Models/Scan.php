@@ -15,11 +15,13 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property ScanStatus $status
  * @property array<string, mixed>|null $detected_stack
  * @property array<string, mixed>|null $skipped_files {total, counts, entries[], truncated} from SkippedFileSummary
+ * @property array<string, mixed>|null $profile RepositoryProfile::toArray()
+ * @property int|null $slop_score_with_structure
  * @property array{system: string, user: string, model: string, truncated?: bool, usage?: array{finish_reason: string, input_tokens: int, output_tokens: int}}|null $synthesis_payload
  */
 #[Fillable([
-    'repository_id', 'user_id', 'status', 'commit_sha', 'slop_score', 'detected_stack',
-    'skipped_files', 'lines_of_code', 'suppression_count', 'suppression_density', 'error_message', 'synthesis_error', 'synthesis_payload',
+    'repository_id', 'user_id', 'status', 'commit_sha', 'slop_score', 'slop_score_with_structure', 'detected_stack',
+    'skipped_files', 'profile', 'lines_of_code', 'suppression_count', 'suppression_density', 'error_message', 'synthesis_error', 'synthesis_payload',
     'started_at', 'finished_at', 'llm_model',
 ])]
 class Scan extends Model
@@ -35,8 +37,10 @@ class Scan extends Model
         return [
             'status' => ScanStatus::class,
             'slop_score' => 'integer',
+            'slop_score_with_structure' => 'integer',
             'detected_stack' => 'array',
             'skipped_files' => 'array',
+            'profile' => 'array',
             'lines_of_code' => 'integer',
             'suppression_count' => 'integer',
             'suppression_density' => 'float',

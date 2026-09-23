@@ -9,6 +9,9 @@ use App\Models\User;
 use App\Scanning\Contracts\GitHubContentSource;
 use App\Scanning\Enums\TargetEditor;
 use App\Scanning\Fetch\LocalDirectoryContentSource;
+use App\Scanning\Profile\AbsenceChecks;
+use App\Scanning\Profile\ProfileFormatter;
+use App\Scanning\Profile\RepositoryProfile;
 use App\Services\Scanning\ContentSourceResolver;
 use App\Services\Scanning\ScanDispatcher;
 use Illuminate\Console\Command;
@@ -19,7 +22,7 @@ use Illuminate\Console\Command;
  */
 class ScanFixtureCommand extends Command
 {
-    protected $signature = 'sentinel:scan-fixture {path : A fixture name under tests/Fixtures/repos or an absolute directory} {--model= : Prism model id} {--editor=claude_code : Editor whose prompts to print} {--no-payload : Do not print the LLM payload} {--no-synthesis : Skip the LLM call (findings and score only)}';
+    protected $signature = 'sentinel:scan-fixture {path : A fixture name under tests/Fixtures/repos or an absolute directory} {--model= : Prism model id} {--editor=claude_code : Editor whose prompts to print} {--no-payload : Do not print the LLM payload} {--no-profile : Do not print the repository profile} {--no-synthesis : Skip the LLM call (findings and score only)}';
 
     protected $description = 'Scan a local directory through the full pipeline synchronously and print the results (development only)';
 
@@ -64,7 +67,7 @@ class ScanFixtureCommand extends Command
         $scan->refresh();
 
         $this->line("Scan {$scan->uuid}: {$scan->status->value}".($scan->error_message ? " ({$scan->error_message})" : ''));
-        $this->line("Score {$scan->slop_score}/100, {$scan->lines_of_code} lines, {$scan->findings()->count()} findings, {$scan->suppression_count} suppressions ({$scan->suppression_density}/kloc), model {$scan->llm_model}");
+        $this->line("Score {$scan->slop_score}/100 (with Structure findings: {$scan->slop_score_with_structure}/100), {$scan->lines_of_code} lines, {$scan->findings()->count()} findings, {$scan->suppression_count} suppressions ({$scan->suppression_density}/kloc), model {$scan->llm_model}");
         $usage = $scan->synthesis_payload['usage'] ?? null;
         if (is_array($usage)) {
             $this->line(sprintf('LLM usage: %d input tokens, %d output tokens, finish reason %s', $usage['input_tokens'], $usage['output_tokens'], $usage['finish_reason']));
@@ -75,6 +78,21 @@ class ScanFixtureCommand extends Command
         }
 
         $editor = TargetEditor::from((string) $this->option('editor'));
+
+        if (! $this->option('no-profile') && $scan->profile !== null) {
+            $this->section('REPOSITORY PROFILE');
+            $this->line(ProfileFormatter::render(RepositoryProfile::fromArray($scan->profile)));
+
+            $this->section('STRUCTURE (ABSENCE) FINDINGS');
+            $structure = $scan->findings()->where('tool', AbsenceChecks::TOOL)->orderBy('severity')->get();
+            if ($structure->isEmpty()) {
+                $this->line('None.');
+            }
+            foreach ($structure as $finding) {
+                $this->line(sprintf('[%s] %s %s', strtoupper($finding->severity->value), $finding->rule_id, $finding->file_path !== '' ? '('.$finding->file_path.')' : '(repository)'));
+                $this->line('    '.$finding->message);
+            }
+        }
 
         if (! $this->option('no-payload') && $scan->synthesis_payload !== null) {
             $this->section('LLM PAYLOAD: SYSTEM PROMPT ('.strlen($scan->synthesis_payload['system']).' chars)');

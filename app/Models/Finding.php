@@ -10,6 +10,10 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+/**
+ * @property FindingCategory $category
+ * @property Severity $severity
+ */
 #[Fillable(['scan_id', 'tool', 'rule_id', 'category', 'severity', 'file_path', 'line', 'symbol', 'message', 'snippet'])]
 class Finding extends Model
 {

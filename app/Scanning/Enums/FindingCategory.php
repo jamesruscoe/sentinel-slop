@@ -19,6 +19,7 @@ enum FindingCategory: string
     case TypeSafety = 'type_safety';
     case Style = 'style';
     case Slop = 'slop';
+    case Structure = 'structure';
     case Other = 'other';
 
     public function label(): string
@@ -37,6 +38,7 @@ enum FindingCategory: string
             self::TypeSafety => 'Type safety',
             self::Style => 'Style',
             self::Slop => 'AI slop',
+            self::Structure => 'Structure / absence',
             self::Other => 'Other',
         };
     }

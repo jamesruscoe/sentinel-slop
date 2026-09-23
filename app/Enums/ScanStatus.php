@@ -12,6 +12,7 @@ enum ScanStatus: string
     case Detecting = 'detecting';
     case Analysing = 'analysing';
     case Heuristics = 'heuristics';
+    case Profiling = 'profiling';
     case Normalising = 'normalising';
     case Scoring = 'scoring';
     case Synthesising = 'synthesising';
@@ -27,6 +28,7 @@ enum ScanStatus: string
             self::Detecting => 'Detecting stack',
             self::Analysing => 'Running analysers',
             self::Heuristics => 'Running slop heuristics',
+            self::Profiling => 'Profiling repository structure',
             self::Normalising => 'Normalising findings',
             self::Scoring => 'Calculating slop score',
             self::Synthesising => 'Generating prompts',
@@ -57,7 +59,8 @@ enum ScanStatus: string
             self::Detecting => 30,
             self::Analysing => 45,
             self::Heuristics => 60,
-            self::Normalising => 70,
+            self::Profiling => 66,
+            self::Normalising => 72,
             self::Scoring => 80,
             self::Synthesising => 90,
             self::Complete, self::Failed => 100,
@@ -86,6 +89,7 @@ enum ScanStatus: string
             self::Detecting,
             self::Analysing,
             self::Heuristics,
+            self::Profiling,
             self::Normalising,
             self::Scoring,
             self::Synthesising,

@@ -67,6 +67,19 @@ final class DependencyIndex
             }
         }
 
+        // The repository's own autoload prefixes shadow any installed package that declares the same
+        // namespace (laravel/pint ships an App\ namespace): App\Foo is the user's class, never pint's.
+        foreach (['autoload', 'autoload-dev'] as $section) {
+            foreach (['psr-4', 'psr-0'] as $standard) {
+                foreach (array_keys(is_array($composer[$section][$standard] ?? null) ? $composer[$section][$standard] : []) as $prefix) {
+                    $prefix = trim(str_replace('_', chr(92), (string) $prefix), chr(92));
+                    if ($prefix !== '') {
+                        unset($phpPrefixes[strtolower($prefix).chr(92)]);
+                    }
+                }
+            }
+        }
+
         $packageJson = self::readJson($root.'/package.json', 512 * 1024) ?? [];
         $npmDeclared = [];
         foreach (['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'] as $section) {
