@@ -61,13 +61,15 @@ final class PackageJsonParser
             return new ManifestData('npm');
         }
 
-        $dependencies = [];
+        $constraints = [];
         foreach (['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'] as $section) {
-            foreach (array_keys(is_array($data[$section] ?? null) ? $data[$section] : []) as $package) {
-                $dependencies[] = (string) $package;
+            foreach (is_array($data[$section] ?? null) ? $data[$section] : [] as $package => $constraint) {
+                $constraints[(string) $package] ??= is_string($constraint) ? $constraint : '';
             }
         }
 
-        return ManifestData::fromDependencies('npm', array_values(array_unique($dependencies)), self::FRAMEWORKS, self::TOOLING);
+        $node = is_array($data['engines'] ?? null) && is_string($data['engines']['node'] ?? null) ? $data['engines']['node'] : '';
+
+        return ManifestData::fromConstraints('npm', $constraints, self::FRAMEWORKS, self::TOOLING, ['node' => $node]);
     }
 }

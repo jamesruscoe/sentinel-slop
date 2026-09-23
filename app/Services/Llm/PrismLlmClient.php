@@ -4,6 +4,8 @@ namespace App\Services\Llm;
 
 use App\Scanning\Contracts\LlmClient;
 use App\Scanning\Exceptions\SynthesisException;
+use App\Scanning\Synthesis\LlmResponse;
+use Prism\Prism\Enums\FinishReason;
 use Prism\Prism\Facades\Prism;
 use Prism\Prism\Schema\ArraySchema;
 use Prism\Prism\Schema\NumberSchema;
@@ -14,17 +16,19 @@ use Throwable;
 /**
  * Structured-output call through Prism. Provider comes from config; the
  * model is chosen per scan. Only the redacted payload built by the
- * synthesiser is ever sent.
+ * synthesiser is ever sent. Prism decodes native structured output with a
+ * plain json_decode, so a truncated reply silently becomes an empty array:
+ * the finish reason is checked before anything else.
  */
 final class PrismLlmClient implements LlmClient
 {
     public function __construct(
         private readonly string $provider,
-        private readonly int $maxOutputTokens = 8000,
+        private readonly int $maxOutputTokens = 16000,
         private readonly int $timeoutSeconds = 180,
     ) {}
 
-    public function plan(string $systemPrompt, string $userPrompt, string $model): array
+    public function plan(string $systemPrompt, string $userPrompt, string $model): LlmResponse
     {
         try {
             $response = Prism::structured()
@@ -40,17 +44,22 @@ final class PrismLlmClient implements LlmClient
             throw new SynthesisException('LLM request failed: '.LlmSecretScrubber::scrub($e->getMessage()));
         }
 
-        if (! is_array($response->structured) || $response->structured === []) {
-            throw new SynthesisException(sprintf(
-                'The model returned no structured output (finish reason %s, %d output tokens of %d allowed, %d characters of text).',
-                $response->finishReason->name,
-                $response->usage->completionTokens,
-                $this->maxOutputTokens,
-                strlen($response->text),
-            ));
+        $finish = $response->finishReason;
+        $usage = sprintf('%d output tokens of %d allowed, %d input tokens', $response->usage->completionTokens, $this->maxOutputTokens, $response->usage->promptTokens);
+
+        if ($finish === FinishReason::Length) {
+            throw new SynthesisException("The model's reply was cut off by the output limit ({$usage}). Raise SENTINEL_LLM_MAX_OUTPUT_TOKENS or lower SENTINEL_LLM_MAX_FINDINGS.");
         }
 
-        return $response->structured;
+        if ($finish !== FinishReason::Stop) {
+            throw new SynthesisException("The model stopped for an unexpected reason: {$finish->name} ({$usage}).");
+        }
+
+        if (! is_array($response->structured) || $response->structured === []) {
+            throw new SynthesisException(sprintf('The model returned no parseable structured output (finish reason %s, %s, %d characters of text).', $finish->name, $usage, strlen($response->text)));
+        }
+
+        return new LlmResponse($response->structured, strtolower($finish->name), $response->usage->promptTokens, $response->usage->completionTokens);
     }
 
     public static function schema(): ObjectSchema

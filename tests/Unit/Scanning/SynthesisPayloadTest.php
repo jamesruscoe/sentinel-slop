@@ -31,7 +31,7 @@ test('findings are trimmed to the token budget and the max count, keeping the mo
         payloadFinding('high', 'high.php'),
     ]);
 
-    $budgeted = (new SynthesisPayloadBuilder(tokenBudget: 800, maxFindings: 150))->build($findings, reservedTokens: 100);
+    $budgeted = (new SynthesisPayloadBuilder(tokenBudget: 800, maxFindings: 150))->build($findings, maxTokens: 700);
     $counted = (new SynthesisPayloadBuilder(tokenBudget: 100000, maxFindings: 5))->build($findings);
 
     expect($budgeted['text'])->toStartWith('- [high] high.php')

@@ -17,6 +17,7 @@ final class Stack
      * @param  list<string>  $manifests  Manifest files found, e.g. composer.json
      * @param  list<string>  $packageManagers  e.g. composer, npm, pnpm
      * @param  array<string, list<string>>  $dependencies  Ecosystem => declared package names
+     * @param  array<string, string>  $versions  framework/runtime => declared constraint as written in the manifest, e.g. laravel => ^12.0, php => ^8.2
      */
     public function __construct(
         public readonly array $languages = [],
@@ -25,6 +26,7 @@ final class Stack
         public readonly array $manifests = [],
         public readonly array $packageManagers = [],
         public readonly array $dependencies = [],
+        public readonly array $versions = [],
     ) {}
 
     public function primaryLanguage(): ?string
@@ -71,6 +73,53 @@ final class Stack
     }
 
     /**
+     * The declared constraint for a framework or runtime, e.g. "^12.0".
+     */
+    public function constraint(string $name): ?string
+    {
+        $constraint = $this->versions[strtolower($name)] ?? null;
+
+        return $constraint === null || $constraint === '' ? null : $constraint;
+    }
+
+    /**
+     * The leading version number of a declared constraint: "12" for "^12.0",
+     * "8.2" for ">=8.2", null when unknown or a wildcard.
+     */
+    public function version(string $name): ?string
+    {
+        $constraint = $this->constraint($name);
+        if ($constraint === null || preg_match('/(\d+)(?:\.(\d+))?/', $constraint, $m) !== 1) {
+            return null;
+        }
+
+        return isset($m[2]) && $m[2] !== '0' ? $m[1].'.'.$m[2] : $m[1];
+    }
+
+    /**
+     * Frameworks with their major versions where declared: "laravel 12, livewire 3".
+     */
+    public function describeFrameworks(): string
+    {
+        return implode(', ', array_map(fn (string $f) => $f.($this->version($f) !== null ? ' '.$this->version($f) : ''), $this->frameworks));
+    }
+
+    /**
+     * Runtimes with declared versions: "PHP 8.2, Node 20".
+     */
+    public function describeRuntimes(): string
+    {
+        $parts = [];
+        foreach (['php' => 'PHP', 'node' => 'Node', 'typescript' => 'TypeScript'] as $key => $label) {
+            if ($this->version($key) !== null) {
+                $parts[] = $label.' '.$this->version($key);
+            }
+        }
+
+        return implode(', ', $parts);
+    }
+
+    /**
      * @return array<string, float> Language => percentage of bytes.
      */
     public function languagePercentages(): array
@@ -84,7 +133,7 @@ final class Stack
     }
 
     /**
-     * @return array{languages: array<string, int>, frameworks: list<string>, tooling: list<string>, manifests: list<string>, package_managers: list<string>, dependencies: array<string, list<string>>}
+     * @return array{languages: array<string, int>, frameworks: list<string>, tooling: list<string>, manifests: list<string>, package_managers: list<string>, dependencies: array<string, list<string>>, versions: array<string, string>}
      */
     public function toArray(): array
     {
@@ -95,6 +144,7 @@ final class Stack
             'manifests' => $this->manifests,
             'package_managers' => $this->packageManagers,
             'dependencies' => $this->dependencies,
+            'versions' => $this->versions,
         ];
     }
 
@@ -110,6 +160,7 @@ final class Stack
             manifests: array_values(array_map('strval', (array) ($data['manifests'] ?? []))),
             packageManagers: array_values(array_map('strval', (array) ($data['package_managers'] ?? []))),
             dependencies: array_map(fn ($names) => array_values(array_map('strval', (array) $names)), (array) ($data['dependencies'] ?? [])),
+            versions: array_map('strval', (array) ($data['versions'] ?? [])),
         );
     }
 }

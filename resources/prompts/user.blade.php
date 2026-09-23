@@ -6,7 +6,8 @@ The score is capped because malware-like patterns or committed secrets were foun
 
 Detected stack:
 - Languages: {{ implode(', ', array_map(fn ($lang, $pct) => "$lang ($pct%)", array_keys($stack->languagePercentages()), $stack->languagePercentages())) ?: 'unknown' }}
-- Frameworks: {{ implode(', ', $stack->frameworks) ?: 'none detected' }}
+- Frameworks, with the major version declared in the manifest where known: {{ $stack->describeFrameworks() ?: 'none detected' }}
+- Runtimes declared: {{ $stack->describeRuntimes() ?: 'not declared' }}
 - Tooling the project claims to use: {{ implode(', ', $stack->tooling) ?: 'none detected' }}
 - Package managers: {{ implode(', ', $stack->packageManagers) ?: 'none detected' }}
 

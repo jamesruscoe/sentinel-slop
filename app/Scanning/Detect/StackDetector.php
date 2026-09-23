@@ -34,6 +34,7 @@ final class StackDetector
         $frameworks = [];
         $tooling = [];
         $dependencies = [];
+        $versions = [];
 
         foreach (self::MANIFESTS as $basename => $kind) {
             $contents = $this->readManifest($repoPath.'/'.$basename);
@@ -51,6 +52,7 @@ final class StackDetector
 
             array_push($frameworks, ...$data->frameworks);
             array_push($tooling, ...$data->tooling);
+            $versions += $data->versions;
             $dependencies[$data->ecosystem] = array_values(array_unique([...($dependencies[$data->ecosystem] ?? []), ...$data->dependencies]));
         }
 
@@ -77,6 +79,7 @@ final class StackDetector
             manifests: $manifests,
             packageManagers: self::unique($packageManagers),
             dependencies: $dependencies,
+            versions: $versions,
         );
     }
 

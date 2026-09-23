@@ -9,6 +9,10 @@ use App\Scanning\Enums\Severity;
 
 final class Finding
 {
+    /**
+     * @param  string|null  $symbol  Enclosing class/function, e.g. `App\Services\InvoiceService::render()`.
+     *                               Only ever set from an AST or a tool's own output; never guessed.
+     */
     public function __construct(
         public readonly string $tool,
         public readonly ?string $ruleId,
@@ -18,10 +22,11 @@ final class Finding
         public readonly ?int $line,
         public readonly string $message,
         public readonly ?string $snippet = null,
+        public readonly ?string $symbol = null,
     ) {}
 
     /**
-     * @return array{tool: string, rule_id: string|null, category: string, severity: string, file_path: string, line: int|null, message: string, snippet: string|null}
+     * @return array{tool: string, rule_id: string|null, category: string, severity: string, file_path: string, line: int|null, symbol: string|null, message: string, snippet: string|null}
      */
     public function toArray(): array
     {
@@ -32,6 +37,7 @@ final class Finding
             'severity' => $this->severity->value,
             'file_path' => $this->filePath,
             'line' => $this->line,
+            'symbol' => $this->symbol,
             'message' => $this->message,
             'snippet' => $this->snippet,
         ];
@@ -51,6 +57,7 @@ final class Finding
             line: isset($data['line']) ? (int) $data['line'] : null,
             message: (string) $data['message'],
             snippet: isset($data['snippet']) ? (string) $data['snippet'] : null,
+            symbol: isset($data['symbol']) ? (string) $data['symbol'] : null,
         );
     }
 
@@ -60,6 +67,16 @@ final class Finding
     public function with(array $overrides): self
     {
         return self::fromArray(array_merge($this->toArray(), $overrides));
+    }
+
+    /**
+     * Human location: `path:line in Symbol`, exactly what the LLM and the UI show.
+     */
+    public function location(): string
+    {
+        return $this->filePath
+            .($this->line !== null ? ':'.$this->line : '')
+            .($this->symbol !== null ? ' in '.$this->symbol : '');
     }
 
     public function isSecurityCritical(): bool

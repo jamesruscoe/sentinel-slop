@@ -10,7 +10,7 @@ use App\Scanning\Data\FindingCollection;
 /**
  * Turns raw analyser output into the canonical findings shape: relative
  * forward-slash paths, clamped snippets and messages, redacted secrets,
- * de-duplicated, sorted most severe first.
+ * enclosing symbols resolved from the AST, de-duplicated, sorted most severe first.
  */
 final class FindingNormaliser
 {
@@ -26,7 +26,8 @@ final class FindingNormaliser
 
     public function normalise(FindingCollection $findings, ?string $repoPath = null): FindingCollection
     {
-        $normalised = $findings->map(fn (Finding $f) => $this->redactor->redact($this->clean($f, $repoPath)));
+        $locator = $repoPath !== null ? new PhpSymbolLocator($repoPath) : null;
+        $normalised = $findings->map(fn (Finding $f) => $this->redactor->redact($this->locate($this->clean($f, $repoPath), $locator)));
         $deduped = $this->deduplicator->dedupe($normalised);
 
         $sorted = $deduped->all();
@@ -60,6 +61,20 @@ final class FindingNormaliser
             'message' => $message,
             'snippet' => $this->clampSnippet($finding->snippet),
         ]);
+    }
+
+    /**
+     * Attach the enclosing symbol from the AST when the finding has none.
+     */
+    private function locate(Finding $finding, ?PhpSymbolLocator $locator): Finding
+    {
+        if ($locator === null || $finding->symbol !== null) {
+            return $finding;
+        }
+
+        $symbol = $locator->locate($finding->filePath, $finding->line);
+
+        return $symbol === null ? $finding : $finding->with(['symbol' => $symbol]);
     }
 
     private function clampSnippet(?string $snippet): ?string

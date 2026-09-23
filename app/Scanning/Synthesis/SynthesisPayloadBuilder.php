@@ -22,11 +22,13 @@ final class SynthesisPayloadBuilder
     ) {}
 
     /**
+     * @param  int|null  $maxTokens  A hard ceiling from the caller (what the context window leaves after the
+     *                               system prompt and the reply allowance); the configured budget still applies.
      * @return array{text: string, included: int, omitted: int, estimated_tokens: int, by_category: array<string, int>}
      */
-    public function build(FindingCollection $findings, int $reservedTokens = 0): array
+    public function build(FindingCollection $findings, ?int $maxTokens = null): array
     {
-        $budget = max(500, $this->tokenBudget - $reservedTokens);
+        $budget = max(500, min($this->tokenBudget, $maxTokens ?? $this->tokenBudget));
         $sorted = $findings->all();
         usort($sorted, fn (Finding $a, Finding $b) => $b->severity->rank() <=> $a->severity->rank());
 
@@ -65,17 +67,20 @@ final class SynthesisPayloadBuilder
         ];
     }
 
+    /**
+     * Conservative: real tokenisers average 3.5-4 characters per token on
+     * code and paths, so 3 keeps the estimate on the safe side.
+     */
     public static function estimateTokens(string $text): int
     {
-        return (int) ceil(strlen($text) / 4);
+        return (int) ceil(strlen($text) / 3);
     }
 
     private function format(Finding $finding): string
     {
-        $line = sprintf('- [%s] %s%s (%s%s) %s: %s',
+        $line = sprintf('- [%s] %s (%s%s) %s: %s',
             $finding->severity->value,
-            $finding->filePath,
-            $finding->line !== null ? ':'.$finding->line : '',
+            $finding->location(),
             $finding->tool,
             $finding->ruleId !== null ? '/'.$finding->ruleId : '',
             $finding->category->value,

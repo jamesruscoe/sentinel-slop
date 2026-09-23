@@ -10,7 +10,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-#[Fillable(['scan_id', 'tool', 'rule_id', 'category', 'severity', 'file_path', 'line', 'message', 'snippet'])]
+#[Fillable(['scan_id', 'tool', 'rule_id', 'category', 'severity', 'file_path', 'line', 'symbol', 'message', 'snippet'])]
 class Finding extends Model
 {
     /** @use HasFactory<FindingFactory> */
@@ -26,6 +26,14 @@ class Finding extends Model
             'severity' => Severity::class,
             'line' => 'integer',
         ];
+    }
+
+    /**
+     * `path:line in Symbol`, matching what the LLM was shown.
+     */
+    public function location(): string
+    {
+        return $this->file_path.($this->line !== null ? ':'.$this->line : '').($this->symbol !== null ? ' in '.$this->symbol : '');
     }
 
     /** @return BelongsTo<Scan, $this> */

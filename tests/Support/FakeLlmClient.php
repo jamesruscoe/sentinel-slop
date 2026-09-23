@@ -3,6 +3,7 @@
 namespace Tests\Support;
 
 use App\Scanning\Contracts\LlmClient;
+use App\Scanning\Synthesis\LlmResponse;
 
 final class FakeLlmClient implements LlmClient
 {
@@ -12,8 +13,11 @@ final class FakeLlmClient implements LlmClient
     /**
      * @param  array<string, mixed>|\Throwable  $response
      */
-    public function __construct(private readonly array|\Throwable $response) {}
+    public function __construct(private readonly array|\Throwable $response, private readonly int $outputTokens = 900) {}
 
+    /**
+     * @return array<string, mixed>
+     */
     public static function samplePlan(): array
     {
         return [
@@ -28,7 +32,7 @@ final class FakeLlmClient implements LlmClient
         ];
     }
 
-    public function plan(string $systemPrompt, string $userPrompt, string $model): array
+    public function plan(string $systemPrompt, string $userPrompt, string $model): LlmResponse
     {
         $this->calls[] = ['system' => $systemPrompt, 'user' => $userPrompt, 'model' => $model];
 
@@ -36,6 +40,6 @@ final class FakeLlmClient implements LlmClient
             throw $this->response;
         }
 
-        return $this->response;
+        return new LlmResponse($this->response, 'stop', (int) ceil(strlen($systemPrompt.$userPrompt) / 4), $this->outputTokens);
     }
 }

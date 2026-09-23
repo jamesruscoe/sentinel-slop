@@ -26,6 +26,7 @@ class FindingFactory extends Factory
             'severity' => fake()->randomElement(Severity::cases()),
             'file_path' => 'src/'.fake()->slug(1).'.php',
             'line' => fake()->numberBetween(1, 400),
+            'symbol' => null,
             'message' => fake()->sentence(),
             'snippet' => null,
         ];

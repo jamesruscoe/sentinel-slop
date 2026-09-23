@@ -33,6 +33,12 @@ class SynthesisePrompts extends ScanStageJob
 
     protected function process(Scan $scan, ScanWorkspace $workspace, ScanWorkspaceFactory $workspaces): void
     {
+        if (! config('sentinel.synthesis.enabled', true)) {
+            $scan->forceFill(['synthesis_error' => 'Prompt generation is disabled on this server.'])->save();
+
+            return;
+        }
+
         $stack = Stack::fromArray($workspace->readArtifact('stack') ?? []);
         $findings = FindingCollection::fromArray(array_values((array) (($workspace->readArtifact('findings-normalised') ?? [])['findings'] ?? [])));
         $score = ScoreResult::fromArray($workspace->readArtifact('score') ?? []);

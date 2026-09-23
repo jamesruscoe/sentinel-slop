@@ -8,7 +8,7 @@ alwaysApply: true
 
 {!! $rules['summary'] !!}
 
-Stack: {{ implode(', ', $stack->frameworks) ?: ($stack->primaryLanguage() ?? 'unknown') }}. Rulesets applied: {{ implode(', ', $rulesets) }}.
+Stack: {{ $stack->describeFrameworks() ?: ($stack->primaryLanguage() ?? 'unknown') }}{{ $stack->describeRuntimes() !== '' ? ' on '.$stack->describeRuntimes() : '' }}. Rulesets applied: {{ implode(', ', $rulesets) }}.
 
 @foreach ($rules['sections'] as $section)
 ## {{ $section['heading'] }}

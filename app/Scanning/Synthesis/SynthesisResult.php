@@ -13,7 +13,7 @@ final class SynthesisResult
      * @param  array<string, list<array{phase: int, title: string, body: string}>>  $prompts  editor value => rendered prompts
      * @param  array<string, array{filename: string, body: string}>  $rulesFiles  editor value => rendered rules file
      * @param  array{included: int, omitted: int, estimated_tokens: int}  $budget
-     * @param  array{system: string, user: string, model: string}  $payload  Exactly what was sent to the LLM.
+     * @param  array{system: string, user: string, model: string, usage?: array{finish_reason: string, input_tokens: int, output_tokens: int}}  $payload  Exactly what was sent to the LLM, plus usage.
      */
     public function __construct(
         public readonly array $phases,

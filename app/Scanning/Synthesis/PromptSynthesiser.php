@@ -12,6 +12,10 @@ use App\Scanning\Exceptions\SynthesisException;
 /**
  * One LLM call produces an editor-neutral plan (five phases plus rules);
  * templates then render it for each target editor.
+ *
+ * Budgeting: the findings payload is trimmed so that system prompt +
+ * findings + the reply (max_output_tokens) always fit in the model's
+ * context window, and the request is refused up front if they cannot.
  */
 final class PromptSynthesiser
 {
@@ -23,18 +27,30 @@ final class PromptSynthesiser
         5 => 'Style and consistency',
     ];
 
+    /** Headroom for template text, tokeniser variance and the schema. */
+    private const MARGIN_TOKENS = 2000;
+
     public function __construct(
         private readonly LlmClient $llm,
         private readonly TemplateRenderer $templates,
         private readonly SynthesisPayloadBuilder $payloads,
+        private readonly int $maxOutputTokens = 16000,
+        private readonly int $contextWindow = 200000,
     ) {}
 
     public function synthesise(SynthesisRequest $request): SynthesisResult
     {
         $rulesetText = implode("\n\n", array_map(fn (string $name, string $md) => "## Ruleset: {$name}\n\n{$md}", array_keys($request->rulesets), $request->rulesets));
-        $payload = $this->payloads->build($request->findings, SynthesisPayloadBuilder::estimateTokens($rulesetText) + 2000);
-
         $system = $this->templates->render('system', ['rulesets' => $rulesetText, 'phases' => self::PHASES]);
+
+        $systemTokens = SynthesisPayloadBuilder::estimateTokens($system);
+        $availableForFindings = $this->contextWindow - $this->maxOutputTokens - $systemTokens - self::MARGIN_TOKENS;
+        if ($availableForFindings < 500) {
+            throw new SynthesisException(sprintf('The system prompt (%d tokens) plus the reply allowance (%d tokens) do not fit in the %d-token context window.', $systemTokens, $this->maxOutputTokens, $this->contextWindow));
+        }
+
+        $payload = $this->payloads->build($request->findings, maxTokens: $availableForFindings);
+
         $user = $this->templates->render('user', [
             'repository' => $request->repositoryName,
             'stack' => $request->stack,
@@ -47,15 +63,22 @@ final class PromptSynthesiser
             'phases' => self::PHASES,
         ]);
 
+        $inputTokens = $systemTokens + SynthesisPayloadBuilder::estimateTokens($user);
+        if ($inputTokens + $this->maxOutputTokens > $this->contextWindow) {
+            throw new SynthesisException(sprintf('The prompt (%d tokens) plus the reply allowance (%d tokens) exceed the %d-token context window.', $inputTokens, $this->maxOutputTokens, $this->contextWindow));
+        }
+
         $sent = ['system' => $system, 'user' => $user, 'model' => $request->model];
 
         try {
-            $plan = $this->llm->plan($system, $user, $request->model);
-            $phases = $this->validatePhases($plan['phases'] ?? null);
-            $rules = $this->validateRules($plan['rules'] ?? null);
+            $response = $this->llm->plan($system, $user, $request->model);
+            $phases = $this->validatePhases($response->plan['phases'] ?? null);
+            $rules = $this->validateRules($response->plan['rules'] ?? null);
         } catch (SynthesisException $e) {
             throw $e->withPayload($sent);
         }
+
+        $sent['usage'] = $response->usage();
 
         $prompts = [];
         $rulesFiles = [];

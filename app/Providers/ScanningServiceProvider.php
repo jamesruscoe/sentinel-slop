@@ -105,6 +105,8 @@ class ScanningServiceProvider extends ServiceProvider
             $app->make(LlmClient::class),
             $app->make(TemplateRenderer::class),
             $app->make(SynthesisPayloadBuilder::class),
+            (int) config('sentinel.synthesis.max_output_tokens', 16000),
+            (int) config('sentinel.synthesis.context_window', 200000),
         ));
     }
 

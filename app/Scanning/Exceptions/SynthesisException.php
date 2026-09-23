@@ -10,7 +10,7 @@ namespace App\Scanning\Exceptions;
  */
 class SynthesisException extends ScanException
 {
-    /** @var array{system: string, user: string, model: string}|null  What was sent before the failure, for inspection. */
+    /** @var array{system: string, user: string, model: string}|null What was sent before the failure, for inspection. */
     public ?array $payload = null;
 
     /**

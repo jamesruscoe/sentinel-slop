@@ -19,7 +19,7 @@ use Illuminate\Console\Command;
  */
 class ScanFixtureCommand extends Command
 {
-    protected $signature = 'sentinel:scan-fixture {path : A fixture name under tests/Fixtures/repos or an absolute directory} {--model= : Prism model id} {--editor=claude_code : Editor whose prompts to print} {--no-payload : Do not print the LLM payload}';
+    protected $signature = 'sentinel:scan-fixture {path : A fixture name under tests/Fixtures/repos or an absolute directory} {--model= : Prism model id} {--editor=claude_code : Editor whose prompts to print} {--no-payload : Do not print the LLM payload} {--no-synthesis : Skip the LLM call (findings and score only)}';
 
     protected $description = 'Scan a local directory through the full pipeline synchronously and print the results (development only)';
 
@@ -46,6 +46,9 @@ class ScanFixtureCommand extends Command
 
         // Everything runs inline, including broadcasts, and Reverb may not be up.
         config(['sentinel.queue.connection' => 'sync', 'broadcasting.default' => 'null']);
+        if ($this->option('no-synthesis')) {
+            config(['sentinel.synthesis.enabled' => false]);
+        }
         app()->instance(ContentSourceResolver::class, new class($directory) implements ContentSourceResolver
         {
             public function __construct(private readonly string $directory) {}
@@ -62,6 +65,10 @@ class ScanFixtureCommand extends Command
 
         $this->line("Scan {$scan->uuid}: {$scan->status->value}".($scan->error_message ? " ({$scan->error_message})" : ''));
         $this->line("Score {$scan->slop_score}/100, {$scan->lines_of_code} lines, {$scan->findings()->count()} findings, {$scan->suppression_count} suppressions ({$scan->suppression_density}/kloc), model {$scan->llm_model}");
+        $usage = $scan->synthesis_payload['usage'] ?? null;
+        if (is_array($usage)) {
+            $this->line(sprintf('LLM usage: %d input tokens, %d output tokens, finish reason %s', $usage['input_tokens'], $usage['output_tokens'], $usage['finish_reason']));
+        }
 
         if ($scan->status !== ScanStatus::Complete) {
             return self::FAILURE;

@@ -67,6 +67,7 @@ test('a scan runs through the pipeline, stores results and deletes its files', f
         ->and($scan->prompts()->count())->toBe(10)
         ->and($scan->rulesFiles()->pluck('filename')->all())->toBe(['CLAUDE.md', '.cursor/rules/sentinel-slop.mdc'])
         ->and($scan->synthesis_error)->toBeNull()
+        ->and($scan->synthesis_payload['usage']['finish_reason'] ?? null)->toBe('stop')
         ->and($scan->started_at)->not->toBeNull()
         ->and($scan->finished_at)->not->toBeNull()
         ->and($this->repository->fresh()->default_branch)->toBe('main')

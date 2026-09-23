@@ -146,7 +146,13 @@ return [
             'low' => 1,
             'info' => 0,
         ],
-        'scale' => (float) env('SENTINEL_SCORE_SCALE', 1.0),
+        // score = 100 * exp(-(density / scale) ^ exponent), density = weighted points per 1k lines.
+        // scale is the density that scores ~37; exponent > 1 keeps light problems in the 80s-90s
+        // and pushes dense ones below 30. See CLAUDE.md for a worked table.
+        'curve' => [
+            'scale' => (float) env('SENTINEL_SCORE_CURVE_SCALE', 90),
+            'exponent' => (float) env('SENTINEL_SCORE_CURVE_EXPONENT', 2.1),
+        ],
         'critical_cap' => (int) env('SENTINEL_SCORE_CRITICAL_CAP', 40),
         // Inline suppression comments per thousand lines cost this many points each, up to the cap.
         'suppression_weight' => (float) env('SENTINEL_SCORE_SUPPRESSION_WEIGHT', 2.0),
@@ -160,25 +166,31 @@ return [
     |--------------------------------------------------------------------------
     | Retention
     |--------------------------------------------------------------------------
-    | scans.synthesis_payload holds the exact prompts sent to the LLM, which
-    | include snippets of the user's code. Policy for that column once a scan
-    | is older than `days`: `purge` nulls it, `truncate` keeps the prompt
-    | headers (stack, score, category counts) but drops the findings section
-    | with the snippets, `retain` keeps it forever. Applied daily by
+    | Two columns hold snippets of users' code: scans.synthesis_payload (the
+    | exact prompts sent to the LLM) and findings.snippet. One policy covers
+    | both once a scan is older than `days`: `purge` removes the code (nulls
+    | the payload and every snippet), `truncate` keeps the payload's headers
+    | (stack, score, category counts) but drops its findings section and
+    | nulls every snippet, `retain` keeps everything. Applied daily by
     | `sentinel:prune`.
     */
     'retention' => [
-        'synthesis_payload' => env('SENTINEL_RETAIN_SYNTHESIS_PAYLOAD', 'purge'),
-        'synthesis_payload_days' => (int) env('SENTINEL_RETAIN_SYNTHESIS_PAYLOAD_DAYS', 30),
+        'code' => env('SENTINEL_RETAIN_CODE', 'purge'),
+        'days' => (int) env('SENTINEL_RETAIN_CODE_DAYS', 30),
     ],
 
     'synthesis' => [
+        // Off skips the LLM call entirely (findings and score still complete); used by sentinel:scan-fixture --no-synthesis.
+        'enabled' => (bool) env('SENTINEL_SYNTHESIS_ENABLED', true),
         'provider' => env('SENTINEL_LLM_PROVIDER', 'anthropic'),
         'model' => env('SENTINEL_LLM_MODEL', 'claude-sonnet-5'),
         // Models a user may pick per scan. Comma-separated in SENTINEL_LLM_MODELS; the default model is always allowed.
         'models' => array_values(array_unique(array_filter(array_map('trim', explode(',', (string) env('SENTINEL_LLM_MODELS', env('SENTINEL_LLM_MODEL', 'claude-sonnet-5'))))))),
+        // Findings payload budget (input). The synthesiser also caps it so that
+        // system prompt + findings + max_output_tokens always fit in context_window.
         'token_budget' => (int) env('SENTINEL_LLM_TOKEN_BUDGET', 24000),
         'max_output_tokens' => (int) env('SENTINEL_LLM_MAX_OUTPUT_TOKENS', 16000),
+        'context_window' => (int) env('SENTINEL_LLM_CONTEXT_WINDOW', 200000),
         'timeout_seconds' => (int) env('SENTINEL_LLM_TIMEOUT', 180),
         'max_snippet_lines' => 6,
         'max_findings' => (int) env('SENTINEL_LLM_MAX_FINDINGS', 150),

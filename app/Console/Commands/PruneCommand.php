@@ -2,19 +2,22 @@
 
 namespace App\Console\Commands;
 
-use App\Services\Scanning\SynthesisPayloadRetention;
+use App\Services\Scanning\CodeRetention;
 use Illuminate\Console\Command;
 
 class PruneCommand extends Command
 {
     protected $signature = 'sentinel:prune';
 
-    protected $description = 'Apply the retention policy in config/sentinel.php to stored scan data';
+    protected $description = 'Apply the code retention policy in config/sentinel.php to stored scan data';
 
     public function handle(): int
     {
-        $changed = SynthesisPayloadRetention::fromConfig()->apply();
-        $this->info("synthesis_payload: {$changed} scan(s) ".config('sentinel.retention.synthesis_payload').'d after '.config('sentinel.retention.synthesis_payload_days').' days.');
+        $retention = CodeRetention::fromConfig();
+        $changed = $retention->apply();
+
+        $this->info(sprintf('Retention "%s" after %d days: %d synthesis payload(s) and %d finding snippet(s) changed.',
+            $retention->mode(), $retention->days(), $changed['scans'], $changed['findings']));
 
         return self::SUCCESS;
     }

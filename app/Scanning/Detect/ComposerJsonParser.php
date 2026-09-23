@@ -47,16 +47,19 @@ final class ComposerJsonParser
             return new ManifestData('composer');
         }
 
-        $dependencies = [];
+        $constraints = [];
+        $php = '';
         foreach (['require', 'require-dev'] as $section) {
-            foreach (array_keys(is_array($data[$section] ?? null) ? $data[$section] : []) as $package) {
+            foreach (is_array($data[$section] ?? null) ? $data[$section] : [] as $package => $constraint) {
                 $package = (string) $package;
-                if (str_contains($package, '/')) {
-                    $dependencies[] = $package;
+                if ($package === 'php') {
+                    $php = is_string($constraint) ? $constraint : '';
+                } elseif (str_contains($package, '/')) {
+                    $constraints[$package] ??= is_string($constraint) ? $constraint : '';
                 }
             }
         }
 
-        return ManifestData::fromDependencies('composer', array_values(array_unique($dependencies)), self::FRAMEWORKS, self::TOOLING);
+        return ManifestData::fromConstraints('composer', $constraints, self::FRAMEWORKS, self::TOOLING, ['php' => $php]);
     }
 }
