@@ -1,6 +1,6 @@
 # Sentinel Slop fix-it prompt, phase {{ $phase['phase'] }} of {{ count($phases) }}: {!! $phase['title'] !!}
 
-Repository: {{ $repository }}. Paste this into Claude Code in the repository root. Complete it fully before moving to phase {{ $phase['phase'] + 1 }}.
+Repository: {{ $repository }}. Paste this into Claude Code in the repository root. {{ $phase['phase'] < count($phases) ? 'Complete it fully before moving to phase '.($phase['phase'] + 1).'.' : 'This is the final phase.' }}
 
 {!! $phase['body'] !!}
 

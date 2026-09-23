@@ -49,6 +49,8 @@ test('the synthesiser sends stack, score, rulesets and redacted findings and ren
     expect(array_column($claude, 'phase'))->toBe([1, 2, 3, 4, 5])
         ->and($claude[0]['title'])->toBe('Phase 1 title')
         ->and($claude[0]['body'])->toContain('phase 1 of 5', 'Paste this into Claude Code', 'Do phase 1 things.', 'Run the full test suite')
+        ->and($claude[0]['body'])->toContain('before moving to phase 2')
+        ->and($claude[4]['body'])->toContain('This is the final phase.')->not->toContain('phase 6')
         ->and($cursor[4]['body'])->toContain('Paste this into Cursor', 'Do phase 5 things.')
         ->and($result->rulesFileFor(TargetEditor::ClaudeCode))->toMatchArray(['filename' => 'CLAUDE.md'])
         ->and($result->rulesFileFor(TargetEditor::ClaudeCode)['body'])->toContain('# acme/app conventions', 'Keep it tidy & typed.', '## Errors', '- Never swallow exceptions', 'Rulesets applied: php, laravel')
