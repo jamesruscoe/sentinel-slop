@@ -107,6 +107,8 @@ return [
         // The Semgrep release the bundled flags and rules were verified against. sentinel:doctor warns on mismatch.
         'semgrep_version' => env('SENTINEL_SEMGREP_VERSION', '1.177.0'),
         'gitleaks' => env('SENTINEL_GITLEAKS_BINARY', 'gitleaks'),
+        // Ruff (Python). A single binary: `pip install ruff` or the GitHub release; give the full path when it is not on PATH.
+        'ruff' => env('SENTINEL_RUFF_BINARY', 'ruff'),
         'timeout_seconds' => (int) env('SENTINEL_TOOL_TIMEOUT', 300),
         'phpstan_memory_limit' => env('SENTINEL_PHPSTAN_MEMORY', '1G'),
     ],

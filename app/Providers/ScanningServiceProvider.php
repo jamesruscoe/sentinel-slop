@@ -9,6 +9,7 @@ use App\Scanning\Analysers\HeuristicRegistry;
 use App\Scanning\Analysers\JscpdAnalyser;
 use App\Scanning\Analysers\PhpStanAnalyser;
 use App\Scanning\Analysers\PintAnalyser;
+use App\Scanning\Analysers\RuffAnalyser;
 use App\Scanning\Analysers\SemgrepAnalyser;
 use App\Scanning\Contracts\LlmClient;
 use App\Scanning\Contracts\ProcessRunner;
@@ -61,6 +62,7 @@ class ScanningServiceProvider extends ServiceProvider
             $app->make(PhpStanAnalyser::class),
             $app->make(PintAnalyser::class),
             $app->make(EslintAnalyser::class),
+            $app->make(RuffAnalyser::class),
             $this->semgrep($app, 'quality', 'semgrep'),
             $app->make(JscpdAnalyser::class),
         ]));

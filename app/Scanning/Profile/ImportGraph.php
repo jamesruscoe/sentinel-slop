@@ -15,6 +15,9 @@ namespace App\Scanning\Profile;
  */
 final class ImportGraph
 {
+    /** Modules Django, Flask and Celery load by name once their package is registered. */
+    public const FRAMEWORK_LOADED_MODULES = ['models', 'views', 'urls', 'admin', 'apps', 'signals', 'receivers', 'tasks', 'forms', 'serializers', 'middleware', 'checks', 'context_processors', 'routing', 'consumers', 'celery', 'handlers', 'schema', 'hooks', 'plugin', 'cli', 'commands'];
+
     /**
      * @param  array<string, list<string>>  $edges  importer path => imported paths
      * @param  array<string, list<string>>  $reverse  imported path => importer paths
@@ -93,10 +96,17 @@ final class ImportGraph
                 $target = self::resolveMention($mention, $file['path'], $exists, $pageRoots);
                 if ($target !== null && $target !== $file['path']) {
                     $targets[$target] = true;
-                    // A package named by its dotted path (INSTALLED_APPS = ['hc.integrations.slack']) is loaded whole
-                    // by the framework: every module directly inside it counts as referenced.
+                    // A package named by its dotted path (INSTALLED_APPS = ['hc.integrations.slack']) has the modules a
+                    // framework loads by convention loaded with it: models, views, urls, admin, apps, signals, tasks,
+                    // forms, serializers, middleware. Anything else inside the package must still be imported or named,
+                    // so a stray module in an installed app is reported.
                     if (str_ends_with($target, '/__init__.py') && ! str_contains($mention, '/')) {
-                        $globbed[dirname($target).'/'] = true;
+                        foreach (self::FRAMEWORK_LOADED_MODULES as $module) {
+                            $conventional = dirname($target).'/'.$module.'.py';
+                            if (isset($exists[$conventional])) {
+                                $targets[$conventional] = true;
+                            }
+                        }
                     }
                 }
             }
@@ -121,6 +131,10 @@ final class ImportGraph
     private static function globPrefix(string $glob, string $importer, array $aliases): ?string
     {
         $base = explode('*', $glob)[0];
+        // A dotted Python prefix from a dynamic import (import_module(f"hc.integrations.{kind}.transport")).
+        if (! str_contains($base, '/') && str_contains($base, '.') && preg_match('/^[A-Za-z_][\w.]*\.$/', $base) === 1) {
+            $base = str_replace('.', '/', $base);
+        }
         $base = preg_replace('~[^/]*$~', '', $base) ?? $base;
         if ($base === '') {
             return null;

@@ -10,6 +10,7 @@ Detected stack:
 - Runtimes declared: {{ $stack->describeRuntimes() ?: 'not declared' }}
 - Tooling the project claims to use: {{ implode(', ', $stack->tooling) ?: 'none detected' }}
 - Package managers: {{ implode(', ', $stack->packageManagers) ?: 'none detected' }}
+- Analyser coverage: {{ \App\Scanning\Analysers\LanguageCoverage::sentence($stack) }} Weight the phases by each language's share of the code, not by how many findings its tools produced; say in the assessment when a language had no line-level analyser.
 
 @if ($profile !== '')
 ## Repository profile

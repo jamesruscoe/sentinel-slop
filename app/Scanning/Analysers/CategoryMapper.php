@@ -61,6 +61,31 @@ final class CategoryMapper
     }
 
     /**
+     * Ruff rule codes by family. Style families are Low whatever they are;
+     * an undefined name or a syntax error is the Python equivalent of a type
+     * error and stays High.
+     *
+     * @return array{0: FindingCategory, 1: Severity}
+     */
+    public static function ruff(string $code): array
+    {
+        return match (true) {
+            str_starts_with($code, 'E9') || $code === 'F821' || $code === 'F822' || $code === 'F823' => [FindingCategory::TypeSafety, Severity::High],
+            in_array($code, ['F401', 'F841', 'F811', 'F842'], true) || str_starts_with($code, 'ARG') || str_starts_with($code, 'ERA') => [FindingCategory::DeadCode, Severity::Low],
+            str_starts_with($code, 'F') => [FindingCategory::TypeSafety, Severity::Medium],
+            in_array($code, ['S102', 'S307', 'S602', 'S605', 'S609', 'S324'], true) => [FindingCategory::Security, Severity::High],
+            str_starts_with($code, 'S') => [FindingCategory::Security, Severity::Medium],
+            str_starts_with($code, 'BLE') || in_array($code, ['B904', 'B012', 'B030', 'E722', 'TRY002', 'TRY200', 'TRY201', 'TRY302', 'TRY400', 'TRY401'], true) => [FindingCategory::ErrorHandling, Severity::Medium],
+            str_starts_with($code, 'TRY') => [FindingCategory::ErrorHandling, Severity::Low],
+            str_starts_with($code, 'C9') => [FindingCategory::Complexity, Severity::Medium],
+            str_starts_with($code, 'B') || str_starts_with($code, 'PLE') => [FindingCategory::TypeSafety, Severity::Medium],
+            str_starts_with($code, 'T20') => [FindingCategory::Slop, Severity::Low],
+            str_starts_with($code, 'PLW') => [FindingCategory::Other, Severity::Low],
+            default => [FindingCategory::Style, Severity::Low],
+        };
+    }
+
+    /**
      * @param  array<string, mixed>  $metadata
      * @return array{0: FindingCategory, 1: Severity}
      */

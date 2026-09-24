@@ -5,6 +5,7 @@ use App\Scanning\Analysers\GitleaksAnalyser;
 use App\Scanning\Analysers\JscpdAnalyser;
 use App\Scanning\Analysers\PhpStanAnalyser;
 use App\Scanning\Analysers\PintAnalyser;
+use App\Scanning\Analysers\RuffAnalyser;
 use App\Scanning\Analysers\SemgrepAnalyser;
 use App\Scanning\Contracts\ProcessRunner;
 use App\Scanning\Data\AnalyserOptions;
@@ -86,6 +87,14 @@ test('gitleaks ignores the repo .gitleaks.toml, .gitleaksignore and gitleaks:all
     expect(canaryFiles($this->workspace->repoPath()))->toBe([])
         ->and(rulesIn($findings, 'app/Secrets.php'))->toContain('generic-api-key')
         ->and(json_encode($findings->toArray()))->not->toContain('Qm7xLp2Z');
+});
+
+test('ruff ignores the repo pyproject.toml, ruff.toml, .ruff.toml and noqa comments', function () {
+    $findings = app(RuffAnalyser::class)->run($this->workspace->repoPath());
+
+    // The repo's configs exclude every file and select no rules; the file carries noqa on both lines.
+    expect(rulesIn($findings, 'src/bad.py'))->toContain('F401', 'E722')
+        ->and(canaryFiles($this->workspace->repoPath()))->toBe([]);
 });
 
 test('semgrep ignores the repo .semgrepignore, .semgrep.yml and nosemgrep comments', function () {

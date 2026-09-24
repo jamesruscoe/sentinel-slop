@@ -284,6 +284,14 @@ test('a Django app is reachable through INSTALLED_APPS, urls and "from package i
     file_put_contents($repo.'/app/accounts/management/commands/pruneusers.py', "class Command:\n    def handle(self):\n        return 0\n");
     file_put_contents($repo.'/app/orphan/__init__.py', '');
     file_put_contents($repo.'/app/orphan/util.py', "def unused():\n    return None\n");
+    // Planted inside the installed app: imported by nothing, not a conventional module name. Must be reported.
+    file_put_contents($repo.'/app/accounts/legacy_export.py', "def export_everything():\n    return []\n");
+    // Loaded through a dynamic import built from a prefix: must NOT be reported.
+    @mkdir($repo.'/app/plugins/slack', 0777, true);
+    file_put_contents($repo.'/app/plugins/__init__.py', '');
+    file_put_contents($repo.'/app/plugins/slack/__init__.py', '');
+    file_put_contents($repo.'/app/plugins/slack/transport.py', "class Transport:\n    pass\n");
+    file_put_contents($repo.'/app/accounts/models.py', "from importlib import import_module\n\n\ndef transport_for(kind):\n    return import_module(f'app.plugins.{kind}.transport').Transport\n");
 
     [$profile] = profileDirectory($repo, ['django']);
     $areas = array_column($profile->section('areas'), 'area');
@@ -294,9 +302,12 @@ test('a Django app is reachable through INSTALLED_APPS, urls and "from package i
         }
     }
 
-    expect(array_column($profile->section('reachability')['unreferenced'], 'path'))->toBe(['app/orphan/util.py'])
+    $unreferenced = array_column($profile->section('reachability')['unreferenced'], 'path');
+    sort($unreferenced);
+
+    expect($unreferenced)->toBe(['app/accounts/legacy_export.py', 'app/orphan/util.py'])
         ->and($areas)->toContain('app/accounts', 'app/orphan', 'proj')
-        ->and($kinds)->toHaveKeys(['controller', 'route', 'form', 'job'])
+        ->and($kinds)->toHaveKeys(['controller', 'route', 'form', 'job', 'model'])
         ->and($profile->section('tests')['frameworks'])->toContain('django test runner')
         ->and(Naming::stemOf('app/accounts/views.py'))->toBe('account');
 });

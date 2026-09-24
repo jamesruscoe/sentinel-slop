@@ -239,15 +239,21 @@ final class SourceInventory
     private static function mentionsIn(string $contents): array
     {
         // Leading "/" and "." are allowed: `require __DIR__.'/auth.php'` mentions "/auth.php", imports mention "./x".
-        if (preg_match_all('~[\'"]([A-Za-z0-9_@./][A-Za-z0-9_.\-/]{2,200})[\'"]~', $contents, $m) === 0) {
-            return [];
-        }
+        // A file with no plain path strings can still hold globs or dynamic-import prefixes, so nothing returns early.
+        preg_match_all('~[\'"]([A-Za-z0-9_@./][A-Za-z0-9_.\-/]{2,200})[\'"]~', $contents, $m);
 
         $mentions = [];
         // Glob patterns (import.meta.glob('./pages/**/*.vue'), require.context) reference whole directories.
         if (preg_match_all('%[\'"]((?:\./|\.\./|@/|~/|/)?[A-Za-z0-9_.\-/]*\*[A-Za-z0-9_.\-/*{},]*)[\'"]%', $contents, $g) > 0) {
             foreach ($g[1] as $glob) {
                 $mentions['glob:'.$glob] = true;
+            }
+        }
+        // Dynamic imports built from a prefix and a variable (import_module(f"hc.integrations.{kind}.transport"),
+        // import(`./locales/${lang}.ts`)): everything under the prefix may be loaded, so it becomes a glob.
+        if (preg_match_all('%[\'"`]((?:\./|\.\./|@/|~/)?[A-Za-z_][A-Za-z0-9_.\-/]*[./])(?:\{|\$\{)%', $contents, $dyn) > 0) {
+            foreach ($dyn[1] as $prefix) {
+                $mentions['glob:'.$prefix.'*'] = true;
             }
         }
         foreach ($m[1] as $candidate) {

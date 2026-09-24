@@ -113,6 +113,9 @@ final class ProfileFormatter
         $r = $d['reachability'] ?? [];
         $unref = (array) ($r['unreferenced'] ?? []);
         $lines[] = sprintf('REACHABILITY (import graph plus string mentions and globs; framework entry points and auto-discovered kinds excluded): %d of %d files are referenced by nothing (%s lines).', count($unref), $r['supported_files'] ?? 0, number_format((int) ($r['unreferenced_lines'] ?? 0)));
+        if (isset($s['families']['python'])) {
+            $lines[] = '  Python rule: when a package is named in config (INSTALLED_APPS, ROOT_URLCONF), the modules a framework loads by convention ('.implode(', ', array_slice(ImportGraph::FRAMEWORK_LOADED_MODULES, 0, 10)).', ...) count as referenced; every other module must be imported, named in a string, or matched by a dynamic-import prefix. Management commands, migrations and template tags are exempt.';
+        }
         foreach (array_slice($unref, 0, 15) as $u) {
             $lines[] = sprintf('  UNREFERENCED %s (%s, %d lines)', $u['path'], $u['kind'], $u['code_lines']);
         }

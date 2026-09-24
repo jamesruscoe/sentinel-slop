@@ -12,7 +12,7 @@ use App\Scanning\Exceptions\AnalyserUnavailableException;
  */
 final class ToolLocator
 {
-    public const TOOLS = ['phpstan', 'pint', 'eslint', 'jscpd', 'semgrep', 'gitleaks'];
+    public const TOOLS = ['phpstan', 'pint', 'eslint', 'jscpd', 'semgrep', 'gitleaks', 'ruff'];
 
     /**
      * @param  array<string, mixed>  $tools  The `sentinel.tools` config array.
@@ -31,6 +31,7 @@ final class ToolLocator
             'jscpd' => [$this->binary('node'), $this->file('jscpd')],
             'semgrep' => [$this->binary('semgrep')],
             'gitleaks' => [$this->binary('gitleaks')],
+            'ruff' => [$this->binary('ruff')],
             default => throw new AnalyserUnavailableException("Unknown analyser tool: {$tool}"),
         };
     }

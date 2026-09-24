@@ -6,6 +6,7 @@ use App\Scanning\Analysers\JscpdAnalyser;
 use App\Scanning\Analysers\PhpStanAnalyser;
 use App\Scanning\Analysers\PintAnalyser;
 use App\Scanning\Analysers\ProcessAnalyser;
+use App\Scanning\Analysers\RuffAnalyser;
 use App\Scanning\Analysers\SemgrepAnalyser;
 use App\Scanning\Contracts\ProcessRunner;
 use App\Scanning\Data\AnalyserOptions;
@@ -81,6 +82,15 @@ test('every JavaScript analyser sees the files of a workspace on the production 
     expect($eslint)->toContain('eqeqeq')
         ->and($jscpd)->toContain('src/dupB.ts')
         ->and($slop->count())->toBeGreaterThan(0);
+});
+
+test('ruff sees the files of a workspace on the production path', function () {
+    $workspace = productionWorkspaceFromFixture('python-service');
+    file_put_contents($workspace->repoPath().'/shipping/unused_imports.py', "import os\nimport sys\n\n\ndef nothing():\n    return None\n");
+
+    $rules = array_map(fn (Finding $f) => (string) $f->ruleId, app(RuffAnalyser::class)->run($workspace->repoPath())->all());
+
+    expect($rules)->toContain('F401');
 });
 
 test('the malware rules see the files of a workspace on the production path', function () {

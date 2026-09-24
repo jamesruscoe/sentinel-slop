@@ -48,5 +48,15 @@
             @endif
             <div><dt class="inline text-zinc-400">Tooling:</dt> <dd class="inline">{{ implode(', ', $stack->tooling) ?: 'none detected' }}</dd></div>
         </dl>
+        @php($coverage = \App\Scanning\Analysers\LanguageCoverage::describe($stack))
+        <dl class="mt-3 space-y-1 border-t border-zinc-800 pt-3 text-xs">
+            <div><dt class="inline text-zinc-400">Language analysers:</dt>
+                <dd class="inline">{{ implode('; ', array_map(fn ($lang, $tools) => "{$lang}: ".implode(', ', $tools), array_keys($coverage['analysed']), $coverage['analysed'])) ?: 'none for this stack' }}</dd></div>
+            @if ($coverage['structural_only'] !== [])
+                <div class="text-amber-200"><dt class="inline">Structural analysis only:</dt>
+                    <dd class="inline">{{ implode(', ', $coverage['structural_only']) }}. No line-level analyser for {{ count($coverage['structural_only']) === 1 ? 'this language' : 'these languages' }} yet; findings there come from the profile, duplication and secrets scanning.</dd></div>
+            @endif
+            <div class="text-zinc-500">Every language: {{ implode(', ', $coverage['universal']) }}.</div>
+        </dl>
     </div>
 </section>

@@ -1,0 +1,46 @@
+# Bundled Ruff configuration. The analyser runs `ruff check --isolated --config <this file>`, so
+# nothing in the scanned repository (pyproject.toml, ruff.toml, .ruff.toml, setup.cfg) is ever read,
+# and `--ignore-noqa` makes inline `# noqa` comments ineffective. respect-gitignore is off because
+# real workspaces live under a directory our own .gitignore excludes (see the jscpd note in CLAUDE.md).
+
+line-length = 120
+target-version = "py39"
+respect-gitignore = false
+force-exclude = false
+
+[lint]
+select = [
+    "E4", "E7", "E9",   # pycodestyle: imports, statements, syntax errors (E501 line length deliberately not selected)
+    "F",                # pyflakes: unused imports/variables, undefined names, redefinitions
+    "B",                # bugbear: likely bugs (mutable defaults, except-without-from, ...)
+    "S",                # bandit: security
+    "C90",              # mccabe complexity
+    "BLE",              # blind except
+    "ERA",              # commented-out code
+    "T20",              # print left in code
+    "ARG",              # unused arguments
+    "UP",               # pyupgrade
+    "SIM",              # simplify
+    "RET",              # return consistency
+    "TRY",              # exception handling anti-patterns
+    "PLE", "PLW",       # pylint errors and warnings
+]
+ignore = [
+    "S101",             # assert: fine outside tests too often to be a finding
+    "TRY003",           # long messages in exceptions: style, not a defect
+    "SIM108",           # ternary suggestions: style
+    "RET505", "RET506", # else-after-return: style
+    "UP015",            # redundant open modes: style
+]
+
+[lint.mccabe]
+max-complexity = 15
+
+[lint.per-file-ignores]
+"**/tests/**" = ["S", "ARG", "BLE", "T20"]
+"**/test_*.py" = ["S", "ARG", "BLE", "T20"]
+"**/*_test.py" = ["S", "ARG", "BLE", "T20"]
+"**/conftest.py" = ["S", "ARG"]
+"**/migrations/**" = ["E", "F", "UP", "ERA", "ARG"]
+"**/scripts/**" = ["T20", "S"]
+"**/manage.py" = ["S"]

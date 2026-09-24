@@ -57,6 +57,11 @@ final class Stack
             || in_array('package.json', $this->manifests, true);
     }
 
+    public function hasPython(): bool
+    {
+        return $this->hasLanguage('Python') || in_array('pyproject.toml', $this->manifests, true) || in_array('requirements.txt', $this->manifests, true);
+    }
+
     public function hasTypeScript(): bool
     {
         return $this->hasLanguage('TypeScript') || in_array('typescript', $this->tooling, true);

@@ -1,0 +1,4 @@
+exclude = ["*"]
+
+[lint]
+select = []

@@ -1,0 +1,6 @@
+# Repository config that would silence Ruff if it were ever read.
+[tool.ruff]
+exclude = ["*"]
+
+[tool.ruff.lint]
+select = []
