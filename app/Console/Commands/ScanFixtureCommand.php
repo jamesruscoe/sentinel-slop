@@ -67,7 +67,7 @@ class ScanFixtureCommand extends Command
         $scan->refresh();
 
         $this->line("Scan {$scan->uuid}: {$scan->status->value}".($scan->error_message ? " ({$scan->error_message})" : ''));
-        $this->line("Score {$scan->slop_score}/100 (with Structure findings: {$scan->slop_score_with_structure}/100), {$scan->lines_of_code} lines, {$scan->findings()->count()} findings, {$scan->suppression_count} suppressions ({$scan->suppression_density}/kloc), model {$scan->llm_model}");
+        $this->line("Score {$scan->slop_score}/100 (without Structure findings: {$scan->slop_score_without_structure}/100), {$scan->lines_of_code} lines, {$scan->findings()->count()} findings, {$scan->suppression_count} suppressions ({$scan->suppression_density}/kloc), model {$scan->llm_model}");
         $usage = $scan->synthesis_payload['usage'] ?? null;
         if (is_array($usage)) {
             $this->line(sprintf('LLM usage: %d input tokens, %d output tokens, finish reason %s', $usage['input_tokens'], $usage['output_tokens'], $usage['finish_reason']));
@@ -104,6 +104,30 @@ class ScanFixtureCommand extends Command
         if ($scan->synthesis_error !== null) {
             $this->section('SYNTHESIS ERROR');
             $this->line($scan->synthesis_error);
+        }
+
+        if ($scan->assessment !== null) {
+            $this->section('ASSESSMENT');
+            $this->line($scan->assessment['summary']);
+            $this->newLine();
+            $this->line('Strengths:');
+            foreach ($scan->assessment['strengths'] as $strength) {
+                $this->line('  - '.$strength);
+            }
+            $this->newLine();
+            $this->line('Structural problems:');
+            foreach ($scan->assessment['structural_problems'] as $problem) {
+                $this->line('  - '.$problem['title']);
+                $this->line('      evidence: '.$problem['evidence']);
+                $this->line('      impact:   '.$problem['impact']);
+            }
+            $this->newLine();
+            $this->line('Recommended refactors:');
+            foreach ($scan->assessment['recommended_refactors'] as $refactor) {
+                $this->line('  - '.$refactor['title'].' ('.$refactor['effort'].')');
+                $this->line('      why:   '.$refactor['rationale']);
+                $this->line('      scope: '.$refactor['scope']);
+            }
         }
 
         foreach ($scan->prompts()->where('target_editor', $editor)->orderBy('phase')->get() as $prompt) {

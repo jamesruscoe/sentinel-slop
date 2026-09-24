@@ -108,6 +108,7 @@ class ScanningServiceProvider extends ServiceProvider
             $app->make(SynthesisPayloadBuilder::class),
             (int) config('sentinel.synthesis.max_output_tokens', 32000),
             (int) config('sentinel.synthesis.context_window', 200000),
+            (int) config('sentinel.synthesis.profile_token_budget', 6000),
         ));
     }
 

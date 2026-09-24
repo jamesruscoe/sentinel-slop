@@ -668,12 +668,26 @@ final class RepositoryProfiler
                 }
             }
             arsort($cluster['kinds']);
+            // One file per conventional kind is the framework's layout working as intended (controller, request,
+            // resource, model, policy, service, factory, ...). Only repeated kinds can be sprawl, and even those
+            // are often convention: several pages per feature, Store/Update requests, one controller per portal.
+            $single = [];
+            $repeated = [];
+            foreach ($cluster['kinds'] as $kind => $count) {
+                if ($count === 1) {
+                    $single[] = $kind;
+                } else {
+                    $repeated[$kind] = $count;
+                }
+            }
             $rows[] = [
                 'stem' => $cluster['stem'],
                 'files' => $cluster['files'],
                 'directories' => count($cluster['directories']),
                 'code_lines' => $cluster['code_lines'],
                 'kinds' => $cluster['kinds'],
+                'single_kinds' => $single,
+                'repeated_kinds' => $repeated,
                 'connected_files' => count($connected),
                 'examples' => array_slice($cluster['paths'], 0, 6),
             ];
@@ -1004,10 +1018,19 @@ final class RepositoryProfiler
         if ($dependencies['single_use'] !== []) {
             $out[] = count($dependencies['single_use']).' direct dependencies are imported from at most two files.';
         }
+        $framework = $summary['frameworks'] !== [];
+        $spread = [];
         foreach ($data['features'] as $feature) {
             if ($feature['files'] >= 20 || $feature['directories'] >= 6) {
-                $out[] = sprintf('Feature "%s" spans %d files in %d directories (%s lines): %s.', $feature['stem'], $feature['files'], $feature['directories'], number_format($feature['code_lines']), implode(', ', array_map(fn ($k, $v) => "$v $k", array_keys($feature['kinds']), $feature['kinds'])));
+                $repeated = implode(', ', array_map(fn ($k, $v) => "$v $k", array_keys($feature['repeated_kinds']), $feature['repeated_kinds']));
+                $spread[] = sprintf('"%s": %d files in %d directories, one each of %s%s', $feature['stem'], $feature['files'], $feature['directories'],
+                    implode(', ', $feature['single_kinds']) ?: 'nothing', $repeated !== '' ? ', plus '.$repeated : '');
             }
+        }
+        if ($spread !== []) {
+            $out[] = 'Feature spread by name stem: '.implode('; ', $spread).'. '
+                .($framework ? 'One file per kind is the framework\'s own layout ('.implode(', ', $summary['frameworks']).') and is expected, not sprawl; several pages, Store/Update requests or one controller per portal are usually convention too. ' : '')
+                .'Sprawl would be the same concern implemented in several of these files, or files that ignore the layout the rest of the codebase follows; the counts alone do not show that.';
         }
         foreach ($data['cohesion']['large_directories'] as $dir) {
             $out[] = sprintf('%s holds %d files directly (%s, stem diversity %.2f): %s.', $dir['directory'], $dir['files'], $dir['flat'] ? 'flat' : 'with subdirectories', $dir['stem_diversity'], implode(', ', array_map(fn ($k, $v) => "$v $k", array_keys($dir['kinds']), $dir['kinds'])));

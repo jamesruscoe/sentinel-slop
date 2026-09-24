@@ -10,6 +10,7 @@ use App\Scanning\Enums\TargetEditor;
 use App\Scanning\Exceptions\ScanException;
 use App\Scanning\Exceptions\SynthesisException;
 use App\Scanning\Fetch\ScanWorkspace;
+use App\Scanning\Profile\RepositoryProfile;
 use App\Scanning\Score\ScoreResult;
 use App\Scanning\Synthesis\PromptSynthesiser;
 use App\Scanning\Synthesis\RulesetLoader;
@@ -43,6 +44,7 @@ class SynthesisePrompts extends ScanStageJob
         $findings = FindingCollection::fromArray(array_values((array) (($workspace->readArtifact('findings-normalised') ?? [])['findings'] ?? [])));
         $score = ScoreResult::fromArray($workspace->readArtifact('score') ?? []);
         $suppressions = $workspace->readArtifact('suppressions') ?? [];
+        $profile = $workspace->readArtifact('profile');
         $editors = array_map(fn (string $e) => TargetEditor::from($e), (array) config('sentinel.synthesis.target_editors', ['claude_code', 'cursor']));
 
         $request = new SynthesisRequest(
@@ -58,6 +60,7 @@ class SynthesisePrompts extends ScanStageJob
                 'density' => (float) ($suppressions['density'] ?? 0),
                 'by_kind' => array_map('intval', (array) ($suppressions['by_kind'] ?? [])),
             ],
+            profile: $profile !== null ? RepositoryProfile::fromArray($profile) : null,
         );
 
         try {
@@ -86,7 +89,7 @@ class SynthesisePrompts extends ScanStageJob
             }
         }
 
-        $scan->forceFill(['synthesis_error' => null, 'synthesis_payload' => $result->payload])->save();
-        $workspace->writeArtifact('synthesis', ['phases' => $result->phases, 'budget' => $result->budget]);
+        $scan->forceFill(['synthesis_error' => null, 'synthesis_payload' => $result->payload, 'assessment' => $result->assessment])->save();
+        $workspace->writeArtifact('synthesis', ['assessment' => $result->assessment, 'phases' => $result->phases, 'budget' => $result->budget]);
     }
 }

@@ -15,7 +15,7 @@ test('the Prism client sends a structured request for the chosen model and retur
 
     $response = (new PrismLlmClient('anthropic', 1234, 30))->plan('SYSTEM PROMPT', 'USER PROMPT', 'claude-opus-5');
 
-    expect($response->plan['phases'])->toHaveCount(5)->and($response->plan['rules']['summary'])->toBe('Keep it tidy & typed.')->and($response->finishReason)->toBe('stop');
+    expect($response->plan['phases'])->toHaveCount(4)->and($response->plan['assessment']['strengths'])->toHaveCount(2)->and($response->plan['rules']['summary'])->toBe('Keep it tidy & typed.')->and($response->finishReason)->toBe('stop');
 
     $fake->assertCallCount(1);
     $fake->assertRequest(function (array $requests) {

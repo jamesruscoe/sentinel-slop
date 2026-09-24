@@ -161,6 +161,10 @@ return [
         // Inline suppression comments per thousand lines cost this many points each, up to the cap.
         'suppression_weight' => (float) env('SENTINEL_SCORE_SUPPRESSION_WEIGHT', 2.0),
         'suppression_cap' => (int) env('SENTINEL_SCORE_SUPPRESSION_CAP', 20),
+        // Structure (absence) findings from the profile stage move the score by at most this many points:
+        // they are the least verifiable findings and must not be able to swing a score by 50.
+        'structure_cap' => (int) env('SENTINEL_SCORE_STRUCTURE_CAP', 15),
+        'structure_tool' => 'profile',
     ],
 
     /*
@@ -230,6 +234,8 @@ return [
         'timeout_seconds' => (int) env('SENTINEL_LLM_TIMEOUT', 600),
         'max_snippet_lines' => 6,
         'max_findings' => (int) env('SENTINEL_LLM_MAX_FINDINGS', 150),
+        // The repository profile is sent before the findings and takes at most this many tokens of the input budget.
+        'profile_token_budget' => (int) env('SENTINEL_LLM_PROFILE_TOKEN_BUDGET', 6000),
         // A rule firing more than this many times is sent as one aggregated finding with a count and example paths.
         'aggregate_threshold' => (int) env('SENTINEL_LLM_AGGREGATE_THRESHOLD', 5),
         'target_editors' => ['claude_code', 'cursor'],

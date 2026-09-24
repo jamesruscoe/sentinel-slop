@@ -34,6 +34,14 @@ final class JscpdAnalyser extends ProcessAnalyser
         $result = $this->execute([
             ...$this->tools->command('jscpd'),
             '--config', $this->options->configFile('jscpd.json'),
+            // Single-file components are tokenised whole as JavaScript. jscpd's own "vue" format splits each
+            // file into per-block sources (Foo.vue:typescript, Foo.vue:html), applies minLines per block and
+            // so misses most page-level duplication, which is exactly the DRY signal we want.
+            '--formats-exts', 'javascript:vue,svelte',
+            // jscpd honours every .gitignore up the directory tree. Sentinel Slop's own .gitignore excludes
+            // storage/app/scans/*, so without this flag jscpd analysed zero files on every real scan, and a
+            // repository's own .gitignore could hide files from it. The config key is not enough.
+            '--no-gitignore',
             '--output', $workDir,
             '--reporters', 'json',
             '--silent',

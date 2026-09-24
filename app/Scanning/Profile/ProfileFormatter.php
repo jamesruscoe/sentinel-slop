@@ -37,9 +37,11 @@ final class ProfileFormatter
         $lines[] = 'LONGEST FUNCTIONS: '.implode('; ', array_map(fn ($f) => sprintf('%s() in %s:%d (%d lines, %s)', $f['name'], $f['path'], $f['line'], $f['length'], $f['method']), (array) ($d['largest_functions'] ?? [])));
         $lines[] = '';
 
-        $lines[] = 'FEATURE SPREAD (files grouped by name stem; "connected" = other files one import away)';
+        $lines[] = 'FEATURE SPREAD (files grouped by name stem; one file per kind is the framework layout, not sprawl; "connected" = other files one import away)';
         foreach ((array) ($d['features'] ?? []) as $f) {
-            $lines[] = sprintf('  %-16s %3d files in %2d dirs, %6s lines, %3d connected: %s. e.g. %s', $f['stem'], $f['files'], $f['directories'], number_format((int) $f['code_lines']), $f['connected_files'], self::pairs((array) $f['kinds'], 5), implode(', ', array_slice((array) $f['examples'], 0, 3)));
+            $repeated = self::pairs((array) ($f['repeated_kinds'] ?? []), 5);
+            $lines[] = sprintf('  %-16s %3d files in %2d dirs, %6s lines, %3d connected. One each: %s%s. e.g. %s', $f['stem'], $f['files'], $f['directories'], number_format((int) $f['code_lines']), $f['connected_files'],
+                implode(', ', (array) ($f['single_kinds'] ?? [])) ?: 'none', $repeated !== '' ? '; repeated: '.$repeated : '', implode(', ', array_slice((array) $f['examples'], 0, 2)));
         }
         $lines[] = '';
 

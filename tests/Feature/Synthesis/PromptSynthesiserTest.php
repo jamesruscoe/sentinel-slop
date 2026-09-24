@@ -6,6 +6,7 @@ use App\Scanning\Data\FindingCollection;
 use App\Scanning\Data\Stack;
 use App\Scanning\Enums\TargetEditor;
 use App\Scanning\Exceptions\SynthesisException;
+use App\Scanning\Profile\RepositoryProfiler;
 use App\Scanning\Score\ScoreResult;
 use App\Scanning\Synthesis\PromptSynthesiser;
 use App\Scanning\Synthesis\RulesetLoader;
@@ -40,19 +41,26 @@ test('the synthesiser sends stack, score, rulesets and redacted findings and ren
 
     expect($llm->calls)->toHaveCount(1)
         ->and($llm->calls[0]['model'])->toBe('claude-sonnet-5')
-        ->and($llm->calls[0]['system'])->toContain('## Ruleset: laravel', 'strict_types', '1. Ensure tests exist and pass')
-        ->and($llm->calls[0]['system'])->toContain('Never infer, guess or invent a class, method, function or variable name')
+        ->and($llm->calls[0]['system'])->toContain('## Ruleset: laravel', 'strict_types', 'reviewing a codebase for maintainability', 'between 3 and 6 phases', 'Never present conventional structure')
+        ->and($llm->calls[0]['system'])->toContain('Never infer, guess or invent a class, method, function, variable or route name')
         ->and($llm->calls[0]['user'])->toContain('acme/app', 'Slop score: 61/100', 'PHP (90%)', 'laravel 12', 'Runtimes declared: PHP 8.3', 'config/x.php:9', 'app/A.php:3 in App\A::total()', 'return "0";', 'Inline suppression comments: 3');
 
     $claude = $result->promptsFor(TargetEditor::ClaudeCode);
     $cursor = $result->promptsFor(TargetEditor::Cursor);
 
-    expect(array_column($claude, 'phase'))->toBe([1, 2, 3, 4, 5])
+    expect(array_column($claude, 'phase'))->toBe([1, 2, 3, 4])
         ->and($claude[0]['title'])->toBe('Phase 1 title')
-        ->and($claude[0]['body'])->toContain('phase 1 of 5', 'Paste this into Claude Code', 'Do phase 1 things.', 'Run the full test suite')
+        ->and($claude[0]['body'])->toContain('phase 1 of 4', 'Paste this into Claude Code', 'Do phase 1 things.', 'Run the full test suite')
         ->and($claude[0]['body'])->toContain('before moving to phase 2')
-        ->and($claude[4]['body'])->toContain('This is the final phase.')->not->toContain('phase 6')
-        ->and($cursor[4]['body'])->toContain('Paste this into Cursor', 'Do phase 5 things.')
+        ->and($claude[3]['body'])->toContain('This is the final phase.')->not->toContain('phase 5')
+        ->and($cursor[3]['body'])->toContain('Paste this into Cursor', 'Do phase 4 things.')
+        ->and($result->assessment['summary'])->toContain('service layer has no logging')
+        ->and($result->assessment['strengths'])->toBe(['No secrets or malware-like patterns', 'Validation through Form Request classes'])
+        ->and($result->assessment['structural_problems'][0]['title'])->toBe('No logging in the service layer')
+        ->and($result->assessment['recommended_refactors'][0]['effort'])->toBe('small')
+        ->and($result->phases[0]['goal'])->toBe('Phase 1 is done.')
+        ->and($result->phases[0]['addresses'])->toBe(['problem 1'])
+        ->and($llm->calls[0]['user'])->not->toContain('## Repository profile')
         ->and($result->rulesFileFor(TargetEditor::ClaudeCode))->toMatchArray(['filename' => 'CLAUDE.md'])
         ->and($result->rulesFileFor(TargetEditor::ClaudeCode)['body'])->toContain('# acme/app conventions', 'Keep it tidy & typed.', '## Errors', '- Never swallow exceptions', 'Stack: laravel 12 on PHP 8.3. Rulesets applied: php, laravel')
         ->and($result->payload['usage'])->toMatchArray(['finish_reason' => 'stop', 'output_tokens' => 900])
@@ -62,12 +70,41 @@ test('the synthesiser sends stack, score, rulesets and redacted findings and ren
         ->and($result->budget['included'])->toBe(2);
 });
 
-test('an incomplete plan is rejected rather than stored', function () {
+test('the repository profile is sent ahead of the findings when the scan has one', function () {
+    $llm = new FakeLlmClient(FakeLlmClient::samplePlan());
+    $synthesiser = new PromptSynthesiser($llm, app(TemplateRenderer::class), new SynthesisPayloadBuilder);
+    $profile = (new RepositoryProfiler)->profile(fixturePath('well-structured'), new Stack(frameworks: ['laravel']));
+    $request = synthesisRequest();
+
+    $result = $synthesiser->synthesise(new SynthesisRequest($request->repositoryName, $request->stack, $request->score, $request->findings, $request->rulesets, $request->editors, $request->model, $request->suppressions, $profile));
+
+    $user = $llm->calls[0]['user'];
+    expect($user)->toContain('## Repository profile', 'AREAS', 'app/Services', 'OBSERVATIONS', '## Findings')
+        ->and(strpos($user, '## Repository profile'))->toBeLessThan(strpos($user, '## Findings'))
+        ->and($result->budget['profile_tokens'])->toBeGreaterThan(200);
+});
+
+test('a plan with too few phases, too many phases or duplicate titles is rejected rather than stored', function () {
     $plan = FakeLlmClient::samplePlan();
-    unset($plan['phases'][2]);
+    unset($plan['phases'][2], $plan['phases'][3]);
 
     $synthesiser = new PromptSynthesiser(new FakeLlmClient($plan), app(TemplateRenderer::class), new SynthesisPayloadBuilder);
-    expect(fn () => $synthesiser->synthesise(synthesisRequest()))->toThrow(SynthesisException::class, '4 usable phases');
+    expect(fn () => $synthesiser->synthesise(synthesisRequest()))->toThrow(SynthesisException::class, '2 usable phases');
+
+    $plan = FakeLlmClient::samplePlan();
+    $plan['phases'] = array_map(fn (int $n) => ['phase' => $n, 'title' => "T{$n}", 'goal' => '', 'body' => 'b', 'addresses' => []], range(1, 7));
+    $synthesiser = new PromptSynthesiser(new FakeLlmClient($plan), app(TemplateRenderer::class), new SynthesisPayloadBuilder);
+    expect(fn () => $synthesiser->synthesise(synthesisRequest()))->toThrow(SynthesisException::class, '7 usable phases');
+
+    $plan = FakeLlmClient::samplePlan();
+    $plan['phases'][0]['title'] = $plan['phases'][1]['title'];
+    $synthesiser = new PromptSynthesiser(new FakeLlmClient($plan), app(TemplateRenderer::class), new SynthesisPayloadBuilder);
+    expect(fn () => $synthesiser->synthesise(synthesisRequest()))->toThrow(SynthesisException::class, 'duplicate titles');
+
+    $plan = FakeLlmClient::samplePlan();
+    $plan['assessment']['summary'] = 'Fine.';
+    $synthesiser = new PromptSynthesiser(new FakeLlmClient($plan), app(TemplateRenderer::class), new SynthesisPayloadBuilder);
+    expect(fn () => $synthesiser->synthesise(synthesisRequest()))->toThrow(SynthesisException::class, 'under 40 words');
 
     $plan = FakeLlmClient::samplePlan();
     $plan['rules'] = ['summary' => 'x', 'sections' => []];

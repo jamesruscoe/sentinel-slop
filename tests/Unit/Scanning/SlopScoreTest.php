@@ -108,6 +108,20 @@ test('score results round-trip and config curve values are honoured', function (
         ->and(ScoreResult::fromArray($result->toArray())->toArray())->toBe($result->toArray());
 });
 
+test('structure findings move the score but never by more than the cap', function () {
+    $structure = fn (string $severity) => Finding::fromArray(['tool' => 'profile', 'rule_id' => 'no-tests-at-all', 'category' => 'structure', 'severity' => $severity, 'file_path' => '', 'line' => null, 'message' => 'm']);
+
+    $one = calculator()->calculate(new FindingCollection([$structure('medium')]), 5000);
+    $five = calculator()->calculate(new FindingCollection(array_fill(0, 5, $structure('high'))), 1000);
+    $mixed = calculator()->calculate(new FindingCollection([...array_fill(0, 5, $structure('high')), ...array_fill(0, 10, scoreFinding('medium'))]), 800);
+
+    expect($one->score)->toBe(99)->and($one->structurePenalty)->toBe(1)->and($one->scoreWithoutStructure)->toBe(100)->and($one->structureCount)->toBe(1)
+        // Five High absence findings in 1k lines would take 100 down to 69 uncapped; the cap holds it at 15 points.
+        ->and($five->scoreWithoutStructure)->toBe(100)->and($five->structurePenalty)->toBe(15)->and($five->score)->toBe(85)
+        // Ordinary findings keep their full weight; only the structure part is capped.
+        ->and($mixed->scoreWithoutStructure)->toBe(60)->and($mixed->score)->toBe(45)->and($mixed->penalty)->toBe(40);
+});
+
 test('lines of code counts non-blank, non-comment lines of source files only', function () {
     $workspace = temporaryWorkspace();
     file_put_contents($workspace->repoPath().'/a.php', "<?php\n\n// comment\n/* block */\n\$a = 1;\n\$b = 2;\n");

@@ -4,19 +4,17 @@ namespace App\Jobs\Scan;
 
 use App\Enums\ScanStatus;
 use App\Models\Scan;
-use App\Scanning\Data\Finding;
 use App\Scanning\Data\FindingCollection;
 use App\Scanning\Fetch\ScanWorkspace;
-use App\Scanning\Profile\AbsenceChecks;
 use App\Scanning\Score\LinesOfCodeCounter;
 use App\Scanning\Score\SlopScoreCalculator;
 use App\Services\Scanning\ScanWorkspaceFactory;
 
 /**
- * Two scores: `slop_score` excludes the Structure findings from the profile
- * stage (the least certain findings we have), `slop_score_with_structure`
- * includes them. Whether they should count is still an open decision; both
- * are stored so it can be made on real numbers.
+ * `slop_score` counts Structure (absence) findings, capped at
+ * `score.structure_cap` points; `slop_score_without_structure` records what
+ * the same findings would score with them ignored, so their effect on a real
+ * repository is always visible.
  */
 class CalculateSlopScore extends ScanStageJob
 {
@@ -32,13 +30,10 @@ class CalculateSlopScore extends ScanStageJob
         $suppressions = $workspace->readArtifact('suppressions') ?? [];
 
         $linesOfCode = LinesOfCodeCounter::count($workspace->repoPath(), $files);
-        $calculator = SlopScoreCalculator::fromConfig((array) config('sentinel.score', []));
-        $density = (float) ($suppressions['density'] ?? 0);
+        $result = SlopScoreCalculator::fromConfig((array) config('sentinel.score', []))
+            ->calculate($findings, $linesOfCode, (float) ($suppressions['density'] ?? 0));
 
-        $withoutStructure = $calculator->calculate($findings->filter(fn (Finding $f) => $f->tool !== AbsenceChecks::TOOL), $linesOfCode, $density);
-        $withStructure = $calculator->calculate($findings, $linesOfCode, $density);
-
-        $scan->forceFill(['lines_of_code' => $linesOfCode, 'slop_score' => $withoutStructure->score, 'slop_score_with_structure' => $withStructure->score])->save();
-        $workspace->writeArtifact('score', $withoutStructure->toArray() + ['with_structure' => $withStructure->toArray()]);
+        $scan->forceFill(['lines_of_code' => $linesOfCode, 'slop_score' => $result->score, 'slop_score_without_structure' => $result->scoreWithoutStructure])->save();
+        $workspace->writeArtifact('score', $result->toArray());
     }
 }
