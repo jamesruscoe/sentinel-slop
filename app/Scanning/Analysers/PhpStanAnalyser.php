@@ -88,7 +88,7 @@ final class PhpStanAnalyser extends ProcessAnalyser
 
         // Pass 2: keep only what PHPStan could actually judge.
         foreach ($entries as $entry) {
-            if (self::judgesInvisibleType($entry['message'], $index) || self::followsFromInvisibleParent($entry['identifier'], $entry['message'], $invisibleParent) || self::isFrameworkBoundClosure($entry['identifier'], $entry['message'], $entry['file'])) {
+            if (self::judgesInvisibleType($entry['message'], $index) || self::followsFromInvisibleParent($entry['identifier'], $entry['message'], $invisibleParent) || self::isFrameworkBoundClosure($entry['identifier'], $entry['message'], $entry['file']) || self::recommendsRemovingAGuard($entry['identifier'])) {
                 continue;
             }
 
@@ -109,6 +109,18 @@ final class PhpStanAnalyser extends ProcessAnalyser
         }
 
         return $findings;
+    }
+
+    /**
+     * "This ?-> / isset / ?? / instanceof can never be null or false" rests on
+     * types PHPStan cannot see here (an Eloquent relation typed non-nullable
+     * that is null for a user without an Owner record). Acting on it removes
+     * a guard that is doing real work and turns an empty page into a 500. A
+     * missed style nit costs nothing; the identifiers are dropped outright.
+     */
+    public static function recommendsRemovingAGuard(string $identifier): bool
+    {
+        return $identifier === 'nullsafe.neverNull' || str_ends_with($identifier, '.alreadyNarrowedType') || str_starts_with($identifier, 'isset.') || str_starts_with($identifier, 'nullCoalesce.') || str_starts_with($identifier, 'instanceof.always') || str_starts_with($identifier, 'booleanNot.always') || str_starts_with($identifier, 'identical.always') || str_starts_with($identifier, 'notIdentical.always') || str_starts_with($identifier, 'ternary.') || str_starts_with($identifier, 'if.always') || str_starts_with($identifier, 'method.alreadyNarrowedType');
     }
 
     /**

@@ -61,7 +61,9 @@ test('the same errors are kept when the repository is not a Laravel application'
 
     $identifiers = array_map(fn ($f) => (string) $f->ruleId, app(PhpStanAnalyser::class)->run($workspace->repoPath())->all());
 
-    expect($identifiers)->toContain('return.type');
+    // `$self?->label` on a non-nullable local is "never null" to PHPStan; telling a user to remove such guards has
+    // turned an empty page into a 500 when the type came from the framework, so the identifier is dropped outright.
+    expect($identifiers)->toContain('return.type')->not->toContain('nullsafe.neverNull');
 });
 
 test('phpstan runs from a detached phar and never sees our own vendor symbols', function () {

@@ -85,7 +85,7 @@ test('the repository profile is sent ahead of the findings when the scan has one
         ->and($result->budget['profile_tokens'])->toBeGreaterThan(200);
 });
 
-test('findings inside files the profile reports as unreferenced are marked before the model sees them', function () {
+test('the reachability section reaches the reviewer with the unreferenced files listed', function () {
     $llm = new FakeLlmClient(FakeLlmClient::samplePlan());
     $synthesiser = new PromptSynthesiser($llm, app(TemplateRenderer::class), new SynthesisPayloadBuilder);
     $profile = new RepositoryProfile(['reachability' => ['supported_files' => 2, 'unreferenced' => [['path' => 'app/A.php', 'area' => 'app', 'kind' => 'code', 'code_lines' => 10]], 'unreferenced_lines' => 10, 'missing_own_classes' => []]]);
@@ -93,10 +93,8 @@ test('findings inside files the profile reports as unreferenced are marked befor
 
     $synthesiser->synthesise(new SynthesisRequest($request->repositoryName, $request->stack, $request->score, $request->findings, $request->rulesets, $request->editors, $request->model, $request->suppressions, $profile));
 
-    $user = $llm->calls[0]['user'];
-    expect($user)->toContain('[in an unreferenced file: nothing imports or mentions it; confirm and delete instead of fixing] bad return')
-        ->and($user)->toContain('UNREFERENCED app/A.php')
-        ->and($user)->not->toContain('unreferenced file: nothing imports or mentions it; confirm and delete instead of fixing] Possible secret');
+    expect($llm->calls[0]['user'])->toContain('UNREFERENCED app/A.php')
+        ->and($llm->calls[0]['system'])->toContain('Findings inside those files have already been removed', 'Repeated code is not automatically a problem', 'A stale TODO is not an unimplemented method', 'never propose logging business-rule outcomes');
 });
 
 test('a plan with too few phases, too many phases or duplicate titles is rejected rather than stored', function () {

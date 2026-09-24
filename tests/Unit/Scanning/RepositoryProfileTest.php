@@ -229,6 +229,32 @@ test('files nothing imports, mentions or globs are unreferenced; framework entry
         ->and($byRule['missing-own-class'][0]->message)->toContain('App\Services\AccountService', 'delete both');
 });
 
+test('a package wired by package discovery, a driver name or a config token is never called unreferenced', function () {
+    $workspace = temporaryWorkspace();
+    $repo = $workspace->repoPath();
+    @mkdir($repo.'/config', 0777, true);
+    @mkdir($repo.'/app', 0777, true);
+    file_put_contents($repo.'/composer.json', json_encode(['require' => ['laravel/framework' => '^12.0', 'league/flysystem-aws-s3-v3' => '^3.0', 'pbmedia/laravel-ffmpeg' => '^8.0', 'acme/discovered' => '^1.0', 'laravel/helpers' => '^1.0', 'acme/forgotten' => '^1.0'], 'autoload' => ['psr-4' => ['App\\' => 'app/']]]));
+    file_put_contents($repo.'/composer.lock', json_encode(['_readme' => ['This file is @generated automatically'], 'packages' => [
+        ['name' => 'laravel/framework', 'version' => 'v12.0.0', 'autoload' => ['psr-4' => ['Illuminate\\' => 'src/Illuminate/']]],
+        ['name' => 'league/flysystem-aws-s3-v3', 'version' => '3.0.0', 'autoload' => ['psr-4' => ['League\\Flysystem\\AwsS3V3\\' => '']]],
+        ['name' => 'pbmedia/laravel-ffmpeg', 'version' => '8.0.0', 'autoload' => ['psr-4' => ['ProtoneMedia\\LaravelFFMpeg\\' => 'src/']]],
+        ['name' => 'acme/discovered', 'version' => '1.0.0', 'autoload' => ['psr-4' => ['Acme\\Discovered\\' => 'src/']], 'extra' => ['laravel' => ['providers' => ['Acme\\Discovered\\ServiceProvider']]]],
+        ['name' => 'laravel/helpers', 'version' => '1.0.0', 'autoload' => ['files' => ['src/helpers.php']]],
+        ['name' => 'acme/forgotten', 'version' => '1.0.0', 'autoload' => ['psr-4' => ['Acme\\Forgotten\\' => 'src/']]],
+    ], 'packages-dev' => []]));
+    file_put_contents($repo.'/config/filesystems.php', "<?php\n\nreturn ['disks' => ['s3' => ['driver' => 's3', 'key' => env('AWS_ACCESS_KEY_ID')]]];\n");
+    file_put_contents($repo.'/.env.example', "MEDIA_DISK=s3\nFFMPEG_BINARIES=/usr/bin/ffmpeg\n");
+    file_put_contents($repo.'/app/Thing.php', "<?php\n\nnamespace App;\n\nuse Illuminate\\Support\\Str;\n\nclass Thing\n{\n    public function name(): string\n    {\n        return Str::slug('x');\n    }\n}\n");
+
+    [$profile] = profileDirectory($repo, ['laravel']);
+    $dependencies = $profile->section('dependencies');
+
+    expect($dependencies['never_referenced'])->toBe(['composer:acme/forgotten'])
+        ->and(implode("\n", $dependencies['wired_without_import']))->toContain('league/flysystem-aws-s3-v3', 'pbmedia/laravel-ffmpeg', 'acme/discovered', 'laravel/helpers')
+        ->and(implode("\n", $dependencies['wired_without_import']))->toContain("'ffmpeg' appears in config or .env.example", 'package discovery');
+});
+
 test('no absence finding fires below its minimum population', function () {
     $workspace = temporaryWorkspace();
     $repo = $workspace->repoPath();

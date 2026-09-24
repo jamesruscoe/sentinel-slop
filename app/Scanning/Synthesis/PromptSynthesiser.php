@@ -6,8 +6,6 @@ namespace App\Scanning\Synthesis;
 
 use App\Scanning\Contracts\LlmClient;
 use App\Scanning\Contracts\TemplateRenderer;
-use App\Scanning\Data\Finding;
-use App\Scanning\Data\FindingCollection;
 use App\Scanning\Enums\TargetEditor;
 use App\Scanning\Exceptions\SynthesisException;
 use App\Scanning\Profile\ProfileFormatter;
@@ -57,7 +55,7 @@ final class PromptSynthesiser
             throw new SynthesisException(sprintf('The system prompt (%d tokens), the profile (%d tokens) and the reply allowance (%d tokens) do not fit in the %d-token context window.', $systemTokens, $profileTokens, $this->maxOutputTokens, $this->contextWindow));
         }
 
-        $payload = $this->payloads->build($this->markUnreferenced($request), maxTokens: $availableForFindings);
+        $payload = $this->payloads->build($request->findings, maxTokens: $availableForFindings);
 
         $user = $this->templates->render('user', [
             'repository' => $request->repositoryName,
@@ -114,26 +112,6 @@ final class PromptSynthesiser
             'estimated_tokens' => $payload['estimated_tokens'],
             'profile_tokens' => $profileTokens,
         ], $sent);
-    }
-
-    /**
-     * A finding inside a file the profile reports as unreferenced is not
-     * something to fix: the message says so before the model reads it, so no
-     * phase proposes logging, tests or type fixes for dead code.
-     */
-    private function markUnreferenced(SynthesisRequest $request): FindingCollection
-    {
-        $unreferenced = [];
-        foreach ((array) ($request->profile?->section('reachability')['unreferenced'] ?? []) as $file) {
-            $unreferenced[(string) $file['path']] = true;
-        }
-        if ($unreferenced === []) {
-            return $request->findings;
-        }
-
-        return $request->findings->map(fn (Finding $f) => isset($unreferenced[$f->filePath]) && $f->ruleId !== 'unreferenced-code'
-            ? $f->with(['message' => '[in an unreferenced file: nothing imports or mentions it; confirm and delete instead of fixing] '.$f->message])
-            : $f);
     }
 
     /**

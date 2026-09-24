@@ -24,6 +24,7 @@ final class DependencyIndex
      * @param  array<string, true>  $npmDeclared  package name => true (package.json dependency sections)
      * @param  array<string, true>  $npmInstalled  package name => true (from the npm/yarn/pnpm lockfile)
      * @param  array<string, list<string>>  $composerRequires  package name => packages it requires, from composer.lock
+     * @param  array<string, true>  $composerAutoDiscovered  package name => true when composer.lock shows extra.laravel (provider/alias discovery)
      */
     public function __construct(
         public readonly bool $hasComposerLock,
@@ -33,6 +34,7 @@ final class DependencyIndex
         public readonly array $npmDeclared,
         public readonly array $npmInstalled,
         public readonly array $composerRequires = [],
+        public readonly array $composerAutoDiscovered = [],
     ) {}
 
     public static function build(string $repoPath, int $maxLockfileBytes = 8 * 1024 * 1024): self
@@ -50,12 +52,18 @@ final class DependencyIndex
         $lock = self::readJson($root.'/composer.lock', $maxLockfileBytes);
         $phpPrefixes = [];
         $requires = [];
+        $autoDiscovered = [];
         foreach (['packages', 'packages-dev'] as $section) {
             foreach (is_array($lock[$section] ?? null) ? $lock[$section] : [] as $package) {
                 if (! is_array($package) || ! is_string($package['name'] ?? null)) {
                     continue;
                 }
                 $requires[strtolower($package['name'])] = array_values(array_filter(array_map(fn ($n) => strtolower((string) $n), array_keys(is_array($package['require'] ?? null) ? $package['require'] : [])), fn (string $n) => str_contains($n, '/')));
+                if ((is_array($package['extra']['laravel'] ?? null) && $package['extra']['laravel'] !== []) || (is_array($package['autoload']['files'] ?? null) && $package['autoload']['files'] !== [])) {
+                    // Package discovery registers the provider, or autoload.files loads global helper functions:
+                    // either way the package is in use without any import or namespace reference in user code.
+                    $autoDiscovered[strtolower($package['name'])] = true;
+                }
                 foreach (['psr-4', 'psr-0'] as $standard) {
                     foreach (array_keys(is_array($package['autoload'][$standard] ?? null) ? $package['autoload'][$standard] : []) as $prefix) {
                         $prefix = trim(str_replace('_', chr(92), (string) $prefix), chr(92));
@@ -90,7 +98,17 @@ final class DependencyIndex
 
         [$hasNpmLock, $npmInstalled] = self::npmLock($root, $maxLockfileBytes);
 
-        return new self($lock !== null, $composerDeclared, $phpPrefixes, $hasNpmLock, $npmDeclared, $npmInstalled, $requires);
+        return new self($lock !== null, $composerDeclared, $phpPrefixes, $hasNpmLock, $npmDeclared, $npmInstalled, $requires, $autoDiscovered);
+    }
+
+    /**
+     * The package registers a Laravel service provider or alias through
+     * `extra.laravel`, or loads global functions through `autoload.files`,
+     * so it is in use without any import or namespace reference.
+     */
+    public function composerAutoDiscovered(string $package): bool
+    {
+        return isset($this->composerAutoDiscovered[strtolower($package)]);
     }
 
     public static function isLockfile(string $path): bool

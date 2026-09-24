@@ -49,7 +49,7 @@ final class PlaceholderCodeHeuristic implements Heuristic
             foreach ($lines as $index => $line) {
                 if ($markers < self::MAX_MARKERS_PER_FILE && preg_match(self::MARKER, $line) === 1 && preg_match('~(//|#|/\*|\*)~', $line) === 1) {
                     $findings->add(new Finding($this->name(), 'todo-marker', FindingCategory::Placeholder, Severity::Low, $file['path'], $index + 1,
-                        'Unfinished work marker left in code.', trim($line)));
+                        'TODO/FIXME comment. If the surrounding code works, the comment is stale: resolve it or replace it with an issue reference. This is not an unimplemented method (those are reported separately as unimplemented-method).', trim($line)));
                     $markers++;
                 }
 

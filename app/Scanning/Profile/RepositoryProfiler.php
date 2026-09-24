@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Scanning\Profile;
 
+use App\Scanning\Data\Finding;
 use App\Scanning\Data\FindingCollection;
 use App\Scanning\Data\Stack;
 use App\Scanning\Detect\DependencyIndex;
@@ -26,7 +27,7 @@ final class RepositoryProfiler
 
     public function __construct(private readonly ProfileConfig $config = new ProfileConfig) {}
 
-    public function profile(string $repoPath, Stack $stack, ?FindingCollection $jscpd = null): RepositoryProfile
+    public function profile(string $repoPath, Stack $stack, ?FindingCollection $jscpd = null, ?FindingCollection $style = null): RepositoryProfile
     {
         $inventory = SourceInventory::build($repoPath);
         $all = $inventory->files;
@@ -35,6 +36,11 @@ final class RepositoryProfiler
         $index = DependencyIndex::build($repoPath);
         $manifests = $this->manifests($repoPath);
         $reachability = $this->reachability($all, $graph, $manifests);
+        // Duplication in a dead file is not duplication to extract: drop those pairs before clustering.
+        $dead = array_fill_keys(array_column($reachability['unreferenced'], 'path'), true);
+        if ($jscpd !== null && $dead !== []) {
+            $jscpd = $jscpd->filter(fn (Finding $f) => ! isset($dead[$f->filePath]) && ! (preg_match('/also found in (.+):\d+\.$/', $f->message, $m) === 1 && isset($dead[$m[1]])));
+        }
 
         $logging = $this->logging($source, $graph, $manifests);
         $validation = $this->validation($source, $graph, $manifests);
@@ -44,7 +50,7 @@ final class RepositoryProfiler
         $areas = $this->areas($all, $source, $logging['by_file'], $tests['linked']);
         $features = $this->features($all, $graph);
         $duplication = $this->duplication($jscpd);
-        $dependencies = $this->dependencies($source, $index, $manifests);
+        $dependencies = $this->dependencies($source, $index, $manifests, $repoPath);
         $cohesion = $this->cohesion($all);
         $documentation = $this->documentation($all, $areas);
         $summary = $this->summary($all, $source, $stack);
@@ -65,6 +71,7 @@ final class RepositoryProfiler
             'cohesion' => $cohesion,
             'documentation' => $documentation,
             'reachability' => $reachability,
+            'style' => $this->style($repoPath, $source, $style),
         ];
         $data['observations'] = $this->observations($data);
 
@@ -771,7 +778,10 @@ final class RepositoryProfiler
         }
         usort($clusters, fn (array $a, array $b) => [$b['lines_saved'], $b['occurrences']] <=> [$a['lines_saved'], $a['occurrences']]);
 
-        $reportable = array_filter($clusters, fn (array $c) => $c['occurrences'] >= $this->config->minClusterOccurrences || $c['lines_saved'] >= $this->config->minClusterSavedLines);
+        // Reportable: enough lines would go, or the block recurs and still saves something real. Three copies of a
+        // 12-line mail builder save 24 lines and are template boilerplate, not a base class waiting to happen.
+        $reportable = array_filter($clusters, fn (array $c) => $c['lines_saved'] >= $this->config->minClusterSavedLines
+            || ($c['occurrences'] >= $this->config->minClusterOccurrences && $c['lines_saved'] >= (int) ceil($this->config->minClusterSavedLines / 2)));
         $covered = [];
         foreach ($reportable as $cluster) {
             foreach ($cluster['locations'] as $location) {
@@ -791,6 +801,42 @@ final class RepositoryProfiler
             'pairs' => count($pairs),
             'total_duplicated_lines' => $totalLines,
             'superseded_pairs' => array_values(array_unique($superseded)),
+        ];
+    }
+
+    /**
+     * How far the codebase's prevailing style is from the preset the style
+     * analyser checks, plus the preset the repository's own pint.json
+     * declares (read as data, never applied). When most files differ, "run
+     * the formatter" is the wrong advice until a preset is agreed.
+     *
+     * @param  list<FileFact>  $source
+     * @return array<string, mixed>
+     */
+    private function style(string $repoPath, array $source, ?FindingCollection $style): array
+    {
+        $phpFiles = 0;
+        foreach ($source as $file) {
+            if ($file['family'] === 'php' && ! $file['is_test']) {
+                $phpFiles++;
+            }
+        }
+        $flagged = [];
+        foreach ($style ?? [] as $finding) {
+            $flagged[$finding->filePath] = true;
+        }
+        $pint = self::readJson($repoPath.'/pint.json');
+        $declared = is_string($pint['preset'] ?? null) ? $pint['preset'] : null;
+        $ratio = $phpFiles > 0 ? round(count($flagged) / $phpFiles, 2) : 0.0;
+
+        return [
+            'checked_preset' => 'laravel',
+            'declared_preset' => $declared,
+            'declared_rules' => is_array($pint['rules'] ?? null) ? count($pint['rules']) : 0,
+            'php_files' => $phpFiles,
+            'files_flagged' => count($flagged),
+            'ratio' => $ratio,
+            'prevailing_style_differs' => $phpFiles >= 10 && $ratio >= 0.4,
         ];
     }
 
@@ -877,7 +923,7 @@ final class RepositoryProfiler
      * @param  Manifests  $manifests
      * @return array<string, mixed>
      */
-    private function dependencies(array $source, DependencyIndex $index, array $manifests): array
+    private function dependencies(array $source, DependencyIndex $index, array $manifests, string $repoPath): array
     {
         $composerUse = [];
         $npmUse = [];
@@ -901,23 +947,39 @@ final class RepositoryProfiler
 
         $singleUse = [];
         $neverReferenced = [];
+        $wiredByConfig = [];
+        $wiring = $this->wiringText($repoPath);
         foreach (array_keys($manifests['composer']) as $package) {
+            $package = (string) $package;
             $files = array_keys($composerUse[$package] ?? []);
-            if ($files === [] && $index->hasComposerLock && ! in_array($package, self::TOOLING_PACKAGES, true) && ! str_starts_with((string) $package, 'ext-') && $package !== 'php') {
-                $neverReferenced[] = 'composer:'.$package;
-            } elseif (count($files) > 0 && count($files) <= 2 && ! in_array($package, self::TOOLING_PACKAGES, true)) {
+            if (in_array($package, self::TOOLING_PACKAGES, true) || str_starts_with($package, 'ext-') || $package === 'php') {
+                continue;
+            }
+            if ($files === [] && $index->hasComposerLock) {
+                $how = self::wiredWithoutImport($package, $index, $wiring);
+                if ($how !== null) {
+                    $wiredByConfig[] = $package.' ('.$how.')';
+                } else {
+                    $neverReferenced[] = 'composer:'.$package;
+                }
+            } elseif (count($files) > 0 && count($files) <= 2) {
                 $singleUse[] = ['package' => 'composer:'.$package, 'files' => $files];
             }
         }
         foreach (array_keys($manifests['npm']) as $package) {
-            if (self::isNpmTooling((string) $package)) {
+            $package = (string) $package;
+            if (self::isNpmTooling($package)) {
                 continue;
             }
             $files = array_keys($npmUse[$package] ?? []);
             if (count($files) > 0 && count($files) <= 2) {
                 $singleUse[] = ['package' => 'npm:'.$package, 'files' => $files];
             } elseif ($files === []) {
-                $neverReferenced[] = 'npm:'.$package;
+                if (str_contains($wiring, strtolower($package))) {
+                    $wiredByConfig[] = $package.' (named in CSS, Blade or config)';
+                } else {
+                    $neverReferenced[] = 'npm:'.$package;
+                }
             }
         }
 
@@ -939,8 +1001,57 @@ final class RepositoryProfiler
             'npm_dev' => count($manifests['npm_dev']),
             'single_use' => $singleUse,
             'never_referenced' => $neverReferenced,
+            'wired_without_import' => $wiredByConfig,
             'most_used' => array_slice($usage, 0, $this->config->topCount, true),
         ];
+    }
+
+    /**
+     * Lowercased text of the files where a package can be wired by name rather
+     * than by import: config/, .env.example, CSS entry points, bundler configs
+     * and Blade layouts (`@vite`, `@import "tailwindcss"`, 's3' drivers).
+     */
+    private function wiringText(string $repoPath): string
+    {
+        $parts = [];
+        $patterns = ['/config/*.php', '/config/**/*.php', '/.env.example', '/.env.*.example', '/resources/css/*.css', '/resources/css/**/*.css', '/resources/sass/*.scss', '/vite.config.*', '/tailwind.config.*', '/postcss.config.*', '/resources/views/*.blade.php', '/resources/views/layouts/*.blade.php', '/resources/views/components/layouts/*.blade.php', '/bootstrap/providers.php', '/bootstrap/app.php'];
+        foreach ($patterns as $pattern) {
+            foreach (glob($repoPath.$pattern, GLOB_BRACE) ?: [] as $file) {
+                if (is_file($file) && (filesize($file) ?: 0) < 256 * 1024) {
+                    $parts[] = (string) file_get_contents($file);
+                }
+            }
+        }
+
+        return strtolower(implode("\n", $parts));
+    }
+
+    /**
+     * Why a composer package that no PHP file references is nevertheless in
+     * use, or null when nothing shows that it is: package discovery, a global
+     * helper file, an adapter/driver/provider name, or a name token that
+     * appears in config or .env.example (the "s3" of flysystem-aws-s3-v3).
+     */
+    private static function wiredWithoutImport(string $package, DependencyIndex $index, string $wiring): ?string
+    {
+        if ($index->composerAutoDiscovered($package)) {
+            return 'registered through package discovery or autoload files';
+        }
+        if (preg_match('~(^socialiteproviders/|flysystem-|-driver$|-adapter$|-provider$|/flysystem|-bridge$|-plugin$|^league/flysystem)~', $package) === 1) {
+            return 'an adapter, driver or provider resolved by name';
+        }
+        $name = substr($package, (int) strpos($package, '/') + 1);
+        $generic = ['laravel', 'php', 'package', 'driver', 'adapter', 'provider', 'providers', 'sdk', 'client', 'plugin', 'js', 'vue', 'core', 'lib', 'framework', 'symfony', 'illuminate', 'api', 'aws', 'league', 'spatie', 'the', 'for', 'and', 'with', 'helper', 'helpers', 'support', 'utils', 'common', 'base', 'main'];
+        foreach (preg_split('/[-_.]/', strtolower($name)) ?: [] as $token) {
+            if (strlen($token) < 3 || in_array($token, $generic, true) || preg_match('/^v\d+$/', $token) === 1) {
+                continue;
+            }
+            if (preg_match('/(?<![a-z0-9])'.preg_quote($token, '/').'(?![a-z0-9])/', $wiring) === 1) {
+                return "'{$token}' appears in config or .env.example";
+            }
+        }
+
+        return null;
     }
 
     private static function isNpmTooling(string $package): bool
@@ -1108,7 +1219,10 @@ final class RepositoryProfiler
             $out[] = $config['env_sites_outside_config'].' direct environment read(s) outside config directories (below the reporting threshold).';
         }
         if ($dependencies['never_referenced'] !== []) {
-            $out[] = 'Declared but never referenced by namespace or import from any source file: '.implode(', ', array_slice($dependencies['never_referenced'], 0, 10)).'. A package wired through config strings, a service provider, CSS or Blade can be in use without such a reference, so this is a list to check, not a list to remove.';
+            $out[] = 'Declared but never referenced by namespace or import from any source file, and not wired by package discovery, autoload files, an adapter/driver name, or a name token in config or .env.example: '.implode(', ', array_slice($dependencies['never_referenced'], 0, 10)).'. This is still a list to check, not a list to remove: a package used only through a string the scanner did not recognise looks exactly like this.';
+        }
+        if ($dependencies['wired_without_import'] !== []) {
+            $out[] = 'Declared packages with no import that are in use anyway: '.implode('; ', array_slice($dependencies['wired_without_import'], 0, 10)).'.';
         }
         if ($dependencies['single_use'] !== []) {
             $out[] = count($dependencies['single_use']).' direct dependencies are imported from at most two files.';
@@ -1129,6 +1243,12 @@ final class RepositoryProfiler
         }
         foreach ($data['cohesion']['large_directories'] as $dir) {
             $out[] = sprintf('%s holds %d files directly (%s, stem diversity %.2f): %s.', $dir['directory'], $dir['files'], $dir['flat'] ? 'flat' : 'with subdirectories', $dir['stem_diversity'], implode(', ', array_map(fn ($k, $v) => "$v $k", array_keys($dir['kinds']), $dir['kinds'])));
+        }
+        $style = $data['style'];
+        if ($style['prevailing_style_differs']) {
+            $out[] = sprintf('Style findings cover %d of %d PHP files (%d%%): the codebase\'s prevailing style differs from the %s preset the style check uses%s. "Run the formatter" would rewrite most of the repository; agree a preset first, then run it once in a dedicated commit.',
+                $style['files_flagged'], $style['php_files'], (int) round($style['ratio'] * 100), $style['checked_preset'],
+                $style['declared_preset'] !== null ? sprintf(' (the repository\'s own pint.json declares the %s preset%s)', $style['declared_preset'], $style['declared_rules'] > 0 ? ' with '.$style['declared_rules'].' rule overrides' : '') : ($style['declared_rules'] > 0 ? ' (the repository\'s own pint.json overrides '.$style['declared_rules'].' rules)' : ''));
         }
         $reach = $data['reachability'];
         if ($reach['unreferenced'] !== []) {

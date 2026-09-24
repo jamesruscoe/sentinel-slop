@@ -7,6 +7,7 @@ use App\Models\Finding;
 use App\Models\Scan;
 use App\Scanning\Data\FindingCollection;
 use App\Scanning\Fetch\ScanWorkspace;
+use App\Scanning\Normalise\DeadCodeFilter;
 use App\Scanning\Normalise\FindingNormaliser;
 use App\Services\Scanning\ScanWorkspaceFactory;
 
@@ -34,6 +35,10 @@ class NormaliseFindings extends ScanStageJob
             $data = $workspace->readArtifact($artifact) ?? [];
             $raw = $raw->merge(FindingCollection::fromArray(array_values((array) ($data['findings'] ?? []))));
         }
+
+        // Findings inside files the profile reports as unreferenced never reach the database or the reviewer.
+        $unreferenced = array_map(fn (array $f) => (string) $f['path'], (array) ((($workspace->readArtifact('profile') ?? [])['reachability'] ?? [])['unreferenced'] ?? []));
+        $raw = (new DeadCodeFilter($unreferenced))->filter($raw);
 
         $normaliser = new FindingNormaliser(maxSnippetLines: (int) config('sentinel.synthesis.max_snippet_lines', 6));
         $findings = $normaliser->normalise($raw, $workspace->repoPath());

@@ -36,6 +36,10 @@ final class OversizedUnitsHeuristic implements Heuristic
         $findings = new FindingCollection;
 
         foreach (SourceFiles::in($path, [...SourceFiles::PHP, ...SourceFiles::JS, ...SourceFiles::PYTHON]) as $file) {
+            // Seeders, factories, migrations, config and fixtures are data: a 140-line seeder is a list, not a unit to split.
+            if (preg_match('~(^|/)(database|config|fixtures?|seeds?|seeders?|factories|migrations|lang|locales?)/~i', $file['path']) === 1) {
+                continue;
+            }
             $codeLines = count(array_filter(SourceFiles::lines($file['absolute']), fn (string $l) => trim($l) !== ''));
 
             if ($codeLines > $this->maxFileLines) {

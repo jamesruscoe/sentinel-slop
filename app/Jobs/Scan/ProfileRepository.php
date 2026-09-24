@@ -35,7 +35,10 @@ class ProfileRepository extends ScanStageJob
         $jscpdArtifact = $workspace->readArtifact('findings/jscpd');
         $jscpd = $jscpdArtifact !== null ? FindingCollection::fromArray(array_values((array) ($jscpdArtifact['findings'] ?? []))) : null;
 
-        $profile = (new RepositoryProfiler($config))->profile($workspace->repoPath(), $stack, $jscpd);
+        $pintArtifact = $workspace->readArtifact('findings/pint');
+        $style = $pintArtifact !== null ? FindingCollection::fromArray(array_values((array) ($pintArtifact['findings'] ?? []))) : null;
+
+        $profile = (new RepositoryProfiler($config))->profile($workspace->repoPath(), $stack, $jscpd, $style);
         $findings = (new AbsenceChecks($config))->run($profile);
 
         $superseded = array_fill_keys((array) ($profile->section('duplication')['superseded_pairs'] ?? []), true);

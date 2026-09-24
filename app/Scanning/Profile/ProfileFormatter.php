@@ -87,7 +87,8 @@ final class ProfileFormatter
         $dep = $d['dependencies'] ?? [];
         $lines[] = sprintf('DEPENDENCIES: composer %d direct + %d dev, npm %d direct + %d dev. Most used: %s.', $dep['composer_direct'] ?? 0, $dep['composer_dev'] ?? 0, $dep['npm_direct'] ?? 0, $dep['npm_dev'] ?? 0, self::pairs((array) ($dep['most_used'] ?? []), 8) ?: 'n/a');
         $lines[] = '  Used from at most two files: '.(implode(', ', array_map(fn ($p) => $p['package'].' ('.implode(', ', $p['files']).')', (array) ($dep['single_use'] ?? []))) ?: 'none');
-        $lines[] = '  Never referenced from source: '.(implode(', ', (array) ($dep['never_referenced'] ?? [])) ?: 'none');
+        $lines[] = '  In use without an import (discovery, autoload files, driver name, config token): '.(implode('; ', (array) ($dep['wired_without_import'] ?? [])) ?: 'none');
+        $lines[] = '  Never referenced from source, config or .env.example: '.(implode(', ', (array) ($dep['never_referenced'] ?? [])) ?: 'none');
         $lines[] = '';
 
         $coh = $d['cohesion'] ?? [];
