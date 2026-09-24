@@ -30,7 +30,8 @@ final class DeadCodeFilter
         $dead = array_fill_keys($this->unreferenced, true);
 
         return $findings->filter(function (Finding $f) use ($dead): bool {
-            if ($f->tool === $this->profileTool) {
+            // A leaked key or a backdoor is as real in a dead file as in a live one (and still caps the score).
+            if ($f->tool === $this->profileTool || $f->isSecurityCritical()) {
                 return true;
             }
             if (isset($dead[$f->filePath])) {

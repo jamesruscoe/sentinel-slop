@@ -20,6 +20,8 @@ test('findings inside unreferenced files are dropped, the profile findings that 
         deadFinding('jscpd', 'duplicate-block', 'routes/tenant.php', '27 duplicated lines (12 statements) also found in routes/kennel.php:24.'),
         deadFinding('jscpd', 'duplicate-block', 'routes/tenant.php', '20 duplicated lines (9 statements) also found in routes/web.php:4.'),
         deadFinding('pint', 'style', 'app/Services/BookingService.php'),
+        // A secret in a dead file is still a secret: sloppy-laravel's planted key vanished with its dead controller.
+        new Finding('gitleaks', 'generic-api-key', FindingCategory::Secrets, Severity::Critical, 'app/Http/Controllers/HandleAccountController.php', 9, 'Possible secret'),
     ]);
 
     $kept = (new DeadCodeFilter(['app/Http/Controllers/HandleAccountController.php', 'routes/kennel.php']))->filter($findings);
@@ -31,6 +33,7 @@ test('findings inside unreferenced files are dropped, the profile findings that 
         'profile|app/Http/Controllers/HandleAccountController.php|m',
         'jscpd|routes/tenant.php|20 duplicated lines (9 statements) also found in routes/web.php:4.',
         'pint|app/Services/BookingService.php|m',
+        'gitleaks|app/Http/Controllers/HandleAccountController.php|Possible secret',
     ]);
 });
 
