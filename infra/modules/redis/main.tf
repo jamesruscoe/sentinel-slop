@@ -1,6 +1,8 @@
-# One Valkey node for Horizon's queues and the cache. Reachable only from the tasks' security group;
-# no auth token, because ElastiCache requires in-transit TLS with one and Laravel would then need a
-# tls:// REDIS_URL. Flip both together if the VPC boundary ever stops being enough.
+# One Redis node for Horizon's queues and the cache. Engine "redis" 7.x on purpose: ElastiCache creates Valkey
+# only through replication groups (CreateCacheCluster rejects engine = "valkey"), and a single-node cluster is
+# the cheapest shape. Reachable only from the tasks' security group; no auth token, because ElastiCache requires
+# in-transit TLS with one and Laravel would then need a tls:// REDIS_URL. Flip both together if the VPC
+# boundary ever stops being enough.
 
 resource "aws_elasticache_subnet_group" "this" {
   name       = var.name
@@ -9,7 +11,7 @@ resource "aws_elasticache_subnet_group" "this" {
 
 resource "aws_elasticache_cluster" "this" {
   cluster_id               = substr(var.name, 0, 40)
-  engine                   = "valkey"
+  engine                   = "redis"
   engine_version           = var.engine_version
   node_type                = var.node_type
   num_cache_nodes          = 1

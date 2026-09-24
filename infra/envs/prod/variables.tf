@@ -48,9 +48,9 @@ variable "redis_node_type" {
 }
 
 variable "redis_engine_version" {
-  description = "Valkey major.minor available on ElastiCache."
+  description = "Redis OSS major.minor for a single-node ElastiCache cluster (Valkey needs a replication group)."
   type        = string
-  default     = "8.0"
+  default     = "7.1"
 }
 
 variable "web_cpu" {
