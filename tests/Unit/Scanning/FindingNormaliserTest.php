@@ -33,6 +33,28 @@ test('paths are made repo-relative with forward slashes and snippets are clamped
         ->and(mb_strlen($b->message))->toBe(1000);
 });
 
+test('security, slop, error-handling and complexity findings in test files become Low with a caveat', function () {
+    // Django: 197 hard-coded passwords and Laravel: eval() in a memoisation test were Medium/High security findings.
+    $result = (new FindingNormaliser)->normalise(new FindingCollection([
+        finding(['category' => 'security', 'severity' => 'high', 'file_path' => 'tests/Support/OnceTest.php', 'message' => 'eval() executes arbitrary strings as code.']),
+        finding(['category' => 'security', 'severity' => 'medium', 'file_path' => 'tests/auth_tests/test_views.py', 'line' => 3]),
+        finding(['category' => 'security', 'severity' => 'medium', 'file_path' => 'app/Http/Login.php']),
+        finding(['category' => 'secrets', 'severity' => 'critical', 'file_path' => 'tests/keys_test.php', 'tool' => 'gitleaks']),
+        finding(['category' => 'type_safety', 'severity' => 'medium', 'file_path' => 'tests/Unit/ATest.php', 'line' => 4]),
+    ]));
+    $bySeverity = [];
+    foreach ($result->all() as $finding) {
+        $bySeverity[$finding->filePath] = [$finding->severity, $finding->message];
+    }
+
+    expect($bySeverity['tests/Support/OnceTest.php'][0])->toBe(Severity::Low)
+        ->and($bySeverity['tests/Support/OnceTest.php'][1])->toBe('eval() executes arbitrary strings as code. This is in a test file: confirm it matters outside the test before treating it as a defect.')
+        ->and($bySeverity['tests/auth_tests/test_views.py'][0])->toBe(Severity::Low)
+        ->and($bySeverity['app/Http/Login.php'][0])->toBe(Severity::Medium)
+        ->and($bySeverity['tests/keys_test.php'][0])->toBe(Severity::Critical)
+        ->and($bySeverity['tests/Unit/ATest.php'][0])->toBe(Severity::Medium);
+});
+
 test('secret findings keep only file, line and type', function () {
     $secret = new FindingCollection([finding([
         'tool' => 'gitleaks', 'category' => 'secrets', 'severity' => 'critical', 'rule_id' => 'aws-access-key',

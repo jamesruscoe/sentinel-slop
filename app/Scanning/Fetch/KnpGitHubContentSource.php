@@ -87,8 +87,14 @@ final class KnpGitHubContentSource implements GitHubContentSource
         try {
             return $call();
         } catch (GitHubRuntimeException $e) {
+            // Every blob is one request: a large repository can exhaust the installation's hourly API allowance
+            // mid-fetch, and that must not read as "the app is not installed".
+            $rateLimited = in_array($e->getCode(), [403, 429], true) && stripos($e->getMessage(), 'rate limit') !== false;
+
             throw new RepositoryUnavailableException(
-                "GitHub could not serve {$owner}/{$repo} (HTTP {$e->getCode()}). Check that the app is still installed on this repository.",
+                $rateLimited
+                    ? "GitHub's API rate limit for this installation was reached while fetching {$owner}/{$repo}. Try again in an hour."
+                    : "GitHub could not serve {$owner}/{$repo} (HTTP {$e->getCode()}). Check that the app is still installed on this repository.",
                 $e->getCode(),
                 $e,
             );

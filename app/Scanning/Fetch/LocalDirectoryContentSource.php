@@ -18,6 +18,9 @@ final class LocalDirectoryContentSource implements GitHubContentSource
     /** @var array<string, int> */
     public array $languages = [];
 
+    /** @var array<string, string>|null blob sha => absolute path, built on the first blob request */
+    private ?array $blobs = null;
+
     public function __construct(private readonly string $directory)
     {
         if (! is_dir($directory)) {
@@ -50,13 +53,21 @@ final class LocalDirectoryContentSource implements GitHubContentSource
 
     public function getBlob(string $owner, string $repo, string $sha): string
     {
-        foreach (FileWalker::walk($this->directory) as $entry) {
-            if (! $entry['is_link'] && sha1('file|'.$entry['path']) === $sha) {
-                return (string) file_get_contents($entry['absolute']);
+        // Index the tree once: walking the directory per blob made fetching quadratic (3,400 files took ten minutes).
+        if ($this->blobs === null) {
+            $this->blobs = [];
+            foreach (FileWalker::walk($this->directory) as $entry) {
+                if (! $entry['is_link']) {
+                    $this->blobs[sha1('file|'.$entry['path'])] = $entry['absolute'];
+                }
             }
         }
 
-        throw new RuntimeException("Unknown blob {$sha}");
+        if (! isset($this->blobs[$sha])) {
+            throw new RuntimeException("Unknown blob {$sha}");
+        }
+
+        return (string) file_get_contents($this->blobs[$sha]);
     }
 
     public function getLanguages(string $owner, string $repo): array

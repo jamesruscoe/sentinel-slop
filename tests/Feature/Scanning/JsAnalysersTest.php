@@ -7,6 +7,7 @@ use App\Scanning\Contracts\ProcessRunner;
 use App\Scanning\Data\AnalyserOptions;
 use App\Scanning\Data\Finding;
 use App\Scanning\Enums\FindingCategory;
+use App\Scanning\Enums\Severity;
 use App\Scanning\Process\ToolLocator;
 
 beforeEach(function () {
@@ -31,6 +32,25 @@ test('jscpd finds the duplicated address normaliser', function () {
         ->and($findings->all()[0]->category)->toBe(FindingCategory::Duplication)
         ->and($findings->all()[0]->filePath)->toBe('src/dupB.ts')
         ->and($findings->all()[0]->message)->toContain('src/dupA.ts');
+});
+
+test('a parse error in a templates or fixtures directory is Low with a caveat, elsewhere High', function () {
+    $workspace = temporaryWorkspace();
+    @mkdir($workspace->repoPath().'/app/views/templates', 0777, true);
+    @mkdir($workspace->repoPath().'/resources/js', 0777, true);
+    // Django's i18n_catalog.js is a template rendered with {% %} tags, not JavaScript.
+    file_put_contents($workspace->repoPath().'/app/views/templates/catalog.js', "{% autoescape off %}\nconst catalog = {{ catalog_str }};\n{% endautoescape %}\n");
+    file_put_contents($workspace->repoPath().'/resources/js/broken.js', "const x = ;\n");
+
+    $findings = app(EslintAnalyser::class)->run($workspace->repoPath());
+    $bySeverity = [];
+    foreach ($findings->all() as $finding) {
+        $bySeverity[$finding->filePath] = $finding->severity;
+    }
+
+    expect($bySeverity['app/views/templates/catalog.js'])->toBe(Severity::Low)
+        ->and($bySeverity['resources/js/broken.js'])->toBe(Severity::High)
+        ->and($findings->all()[0]->ruleId)->toBe('parse-error');
 });
 
 test('jscpd compares Vue single-file components whole, so page-level duplication is found', function () {

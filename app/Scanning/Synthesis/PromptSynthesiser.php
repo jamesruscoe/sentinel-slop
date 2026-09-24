@@ -83,8 +83,9 @@ final class PromptSynthesiser
         $sent = ['system' => $system, 'user' => $user, 'model' => $request->model, 'calls' => [], 'phase_prompts' => []];
 
         try {
+            $started = microtime(true);
             $review = $this->llm->review($system, $user, $request->model);
-            $sent['calls'][] = ['stage' => 'review'] + $review->usage();
+            $sent['calls'][] = ['stage' => 'review'] + ['seconds' => round(microtime(true) - $started, 1)] + $review->usage();
             $assessment = $this->validateAssessment($review->plan['assessment'] ?? null);
             $outline = $this->validateOutline($review->plan['phases'] ?? null);
             $rules = $this->validateRules($review->plan['rules'] ?? null);
@@ -169,8 +170,9 @@ final class PromptSynthesiser
             ]);
             $this->assertFits($phaseSystem, $phaseUser, $this->phaseMaxOutputTokens, "phase {$entry['phase']}");
 
+            $started = microtime(true);
             $response = $this->llm->phase($phaseSystem, $phaseUser, $request->model);
-            $sent['calls'][] = ['stage' => 'phase '.$entry['phase']] + $response->usage();
+            $sent['calls'][] = ['stage' => 'phase '.$entry['phase']] + ['seconds' => round(microtime(true) - $started, 1)] + $response->usage();
             $sent['phase_prompts'][$entry['phase']] = $phaseUser;
 
             $body = trim((string) ($response->plan['body'] ?? ''));

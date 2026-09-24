@@ -10,6 +10,7 @@ final class ScoreResult
      * @param  array<string, int>  $bySeverity  severity => count (all findings, Structure included)
      * @param  int  $structurePenalty  points taken by Structure (absence) findings, at most the configured cap
      * @param  int  $scoreWithoutStructure  the score the same findings would give if Structure findings were ignored
+     * @param  int  $sizePenalty  points taken by size-scaling findings (duplication, complexity), at most the configured cap
      */
     public function __construct(
         public readonly int $score,
@@ -23,6 +24,8 @@ final class ScoreResult
         public readonly int $structurePenalty = 0,
         public readonly int $structureCount = 0,
         public readonly ?int $scoreWithoutStructure = null,
+        public readonly int $sizePenalty = 0,
+        public readonly int $sizeCount = 0,
     ) {}
 
     /**
@@ -40,6 +43,8 @@ final class ScoreResult
             'structure_penalty' => $this->structurePenalty,
             'structure_count' => $this->structureCount,
             'score_without_structure' => $this->scoreWithoutStructure ?? $this->score,
+            'size_penalty' => $this->sizePenalty,
+            'size_count' => $this->sizeCount,
             'critical_cap_applied' => $this->criticalCapApplied,
             'by_severity' => $this->bySeverity,
         ];
@@ -62,6 +67,8 @@ final class ScoreResult
             (int) ($data['structure_penalty'] ?? 0),
             (int) ($data['structure_count'] ?? 0),
             isset($data['score_without_structure']) ? (int) $data['score_without_structure'] : null,
+            (int) ($data['size_penalty'] ?? 0),
+            (int) ($data['size_count'] ?? 0),
         );
     }
 }

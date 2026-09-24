@@ -30,6 +30,24 @@ test('too many files aborts before downloading', function () {
     expect($source->blobRequests)->toBe(0);
 });
 
+test('images, catalogues and generated files are neither downloaded nor counted toward the limits', function () {
+    // Django: 2,537 .po/.mo files; Filament: 112 MB of images. Neither is analysed, so neither may trip a limit.
+    $source = (new FakeContentSource)->addFile('app.py', 'print(1)')->addFile('locale/de/LC_MESSAGES/django.po', 'msgid ""')->addFile('locale/de/LC_MESSAGES/django.mo', 'x', declaredSize: 4_000_000)
+        ->addFile('docs/logo.png', 'x', declaredSize: 9_000_000)->addFile('public/app.min.js', 'x', declaredSize: 3_000_000);
+    $workspace = temporaryWorkspace();
+
+    $result = (new GitHubTreeFetcher($source))->fetch(new RepositoryRef('a', 'b', 'main'), $workspace, fetchLimits(['maxFileCount' => 1, 'maxTotalBytes' => 100, 'skippedExtensions' => ['png', 'po', 'mo'], 'generatedFilePatterns' => ['*.min.js']]));
+
+    expect($result->files)->toBe(['app.py'])
+        ->and($source->blobRequests)->toBe(1)
+        ->and(array_map(fn ($s) => [$s->path, $s->reason->value, $s->detail], $result->skipped))->toBe([
+            ['public/app.min.js', 'minified', 'not downloaded'],
+            ['*.po', 'not_analysed', '1 files not downloaded'],
+            ['*.mo', 'not_analysed', '1 files not downloaded'],
+            ['*.png', 'not_analysed', '1 files not downloaded'],
+        ]);
+});
+
 test('declared total size over the limit aborts before downloading', function () {
     $source = (new FakeContentSource)->addFile('a.txt', 'aaaa')->addFile('b.txt', 'bbbb');
 

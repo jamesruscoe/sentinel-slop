@@ -58,8 +58,27 @@ return [
     ],
 
     /*
+    | Extensions no analyser reads. Decided from the tree listing during
+    | fetch planning: never downloaded, and not counted toward the file and
+    | byte limits, so a repository is judged by what would be analysed.
+    | (Django carries 2,537 locale catalogues, Filament 112 MB of images.)
+    | Preflight still detects binaries by content for anything else.
+    */
+    'skipped_extensions' => [
+        // images and fonts
+        'png', 'jpg', 'jpeg', 'gif', 'bmp', 'ico', 'webp', 'avif', 'svg', 'psd', 'ai', 'woff', 'woff2', 'ttf', 'otf', 'eot',
+        // audio, video, documents
+        'mp3', 'wav', 'ogg', 'flac', 'mp4', 'webm', 'mov', 'avi', 'mkv', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+        // archives and compiled artefacts
+        'zip', 'gz', 'tgz', 'tar', 'bz2', 'xz', '7z', 'rar', 'jar', 'war', 'pyc', 'pyo', 'class', 'o', 'so', 'dll', 'dylib', 'exe', 'wasm', 'phar',
+        // translation catalogues and binary data
+        'po', 'pot', 'mo', 'sqlite', 'sqlite3', 'db', 'parquet', 'pkl', 'npy',
+    ],
+
+    /*
     | Files treated as generated or minified and therefore skipped.
-    | Glob patterns matched against the basename.
+    | Glob patterns matched against the basename. Applied during fetch
+    | planning too, so they are never downloaded or counted.
     */
     'generated_file_patterns' => [
         '*.min.js',
@@ -167,6 +186,10 @@ return [
         // they are the least verifiable findings and must not be able to swing a score by 50.
         'structure_cap' => (int) env('SENTINEL_SCORE_STRUCTURE_CAP', 15),
         'structure_tool' => 'profile',
+        // Findings whose count grows with lines of code whatever the quality (duplicated blocks, oversized units)
+        // cost at most this many points together. laravel/framework: 452 such mediums in 357k lines scored 0.
+        'size_cap' => (int) env('SENTINEL_SCORE_SIZE_CAP', 15),
+        'size_categories' => ['duplication', 'complexity'],
     ],
 
     /*

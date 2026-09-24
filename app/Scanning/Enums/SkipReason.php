@@ -17,10 +17,12 @@ enum SkipReason: string
     case PathEscape = 'path_escape';
     case UnsupportedMode = 'unsupported_mode';
     case NameCollision = 'name_collision';
+    case NotAnalysed = 'not_analysed';
 
     public function label(): string
     {
         return match ($this) {
+            self::NotAnalysed => 'Not a source file (image, font, archive, media or locale catalogue); not downloaded',
             self::Symlink => 'Symbolic link',
             self::Submodule => 'Git submodule',
             self::Binary => 'Binary file',

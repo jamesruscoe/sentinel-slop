@@ -207,7 +207,9 @@ test('files nothing imports, mentions or globs are unreferenced; framework entry
     file_put_contents($repo.'/routes/web.php', "<?php\n\nuse App\\Http\\Controllers\\DogController;\n\nRoute::resource('dogs', DogController::class);\n");
     file_put_contents($repo.'/routes/kennel.php', "<?php\n\nRoute::get('/kennel', fn () => 'never loaded');\n");
     file_put_contents($repo.'/app/helpers.php', "<?php\n\nfunction kennel_name(): string\n{\n    return 'Kennel';\n}\n");
-    file_put_contents($repo.'/app/Http/Controllers/DogController.php', "<?php\n\nnamespace App\\Http\\Controllers;\n\nuse App\\Services\\DogService;\nuse Inertia\\Inertia;\n\nclass DogController\n{\n    public function index(DogService \$dogs)\n    {\n        return Inertia::render('Dogs/Index', ['dogs' => \$dogs->all()]);\n    }\n}\n");
+    // A namespaced function and constant under the own prefix are not class references (laravel/framework's
+    // `use function Illuminate\Support\enum_value` produced 97 missing-own-class findings).
+    file_put_contents($repo.'/app/Http/Controllers/DogController.php', "<?php\n\nnamespace App\\Http\\Controllers;\n\nuse App\\Services\\DogService;\nuse Inertia\\Inertia;\nuse const App\\Support\\PAGE_SIZE;\nuse function App\\Support\\enum_value;\n\nclass DogController\n{\n    public function index(DogService \$dogs)\n    {\n        return Inertia::render('Dogs/Index', ['dogs' => \$dogs->all(), 'size' => enum_value(PAGE_SIZE)]);\n    }\n}\n");
     file_put_contents($repo.'/app/Http/Controllers/HandleAccountController.php', "<?php\n\nnamespace App\\Http\\Controllers;\n\nuse App\\Services\\AccountService;\nuse App\\Services\\OrphanService;\n\nclass HandleAccountController\n{\n    public function __invoke(AccountService \$accounts, OrphanService \$orphans): void\n    {\n        \$accounts->handle();\n    }\n}\n");
     // Referenced only by a dead controller: dead too (fixed point), like a controller wired only from an unloaded route file.
     file_put_contents($repo.'/app/Services/OrphanService.php', "<?php\n\nnamespace App\\Services;\n\nclass OrphanService\n{\n    public function handle(): void\n    {\n    }\n}\n");

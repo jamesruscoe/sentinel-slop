@@ -4,7 +4,10 @@
 # real workspaces live under a directory our own .gitignore excludes (see the jscpd note in CLAUDE.md).
 
 line-length = 120
-target-version = "py39"
+# The newest version Ruff knows, on purpose: with an older target, builtins added later (aiter, anext,
+# BaseExceptionGroup) are reported as F821 undefined names, a High finding that was false on Django itself.
+# The repository's requires-python is never read (no config discovery), so the tool cannot know the real target.
+target-version = "py313"
 respect-gitignore = false
 force-exclude = false
 

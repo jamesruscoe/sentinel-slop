@@ -9,10 +9,10 @@ Sentinel Slop only READS user code. Nothing from a scanned repository is ever ex
 Concrete consequences:
 
 - Repos are fetched file-by-file through the GitHub Git Trees API. No `git clone`. Symlinks (mode 120000) and submodules (160000) are never written to disk.
-- `vendor/`, `node_modules/`, `dist/`, `build/` and friends (see `config/sentinel.php` → `skipped_directories`) are never downloaded, so no `vendor/autoload.php` can exist in a scan directory.
+- `vendor/`, `node_modules/`, `dist/`, `build/` and friends (see `config/sentinel.php` → `skipped_directories`) are never downloaded, so no `vendor/autoload.php` can exist in a scan directory. Files no analyser reads (`skipped_extensions`: images, fonts, media, archives, compiled artefacts, `.po`/`.mo` catalogues) and `generated_file_patterns` are decided from the tree listing too: never downloaded and not counted toward `limits.max_file_count` or `max_total_bytes`, so the limits judge what would be analysed. Django (7,015 tree files, 4,362 analysable) and Rails (4,999 / 4,886) fit the 5,000-file limit that way; Filament (7,964 / 6,500) still does not, and 5,000 is also roughly an installation's hourly GitHub API allowance at one request per blob.
 - Analysers run as argv-array processes (never shell strings) via the `ProcessRunner` interface, with a timeout, and are always given an explicit bundled config plus the tool's "do not discover config" flag.
 - Larastan is NOT used when scanning user repos because it boots a Laravel application. Plain PHPStan with our own neon only. Larastan is only used on Sentinel Slop's own code.
-- Fetched files are deleted after every scan (success or failure) and a scheduled sweeper removes anything older than one hour.
+- Fetched files are deleted after every scan (success or failure). A sweeper for workspaces and scan rows left behind by a killed worker is still to be written (phase 6): `stale_scan_minutes` is read by nothing yet.
 - Installation tokens are minted per scan and never logged or persisted. `App\Services\GitHub\InstallationToken` refuses to be serialised.
 - Secret values found by gitleaks are redacted before storage and before anything is sent to the LLM.
 - The LLM API key lives only in `config/prism.php` (from env). It is never on a job, model or DTO (`LlmClient` is resolved from the container inside the job, never serialised), `PrismLlmClient` rethrows provider errors without the previous exception (Guzzle chains carry the request headers) and `LlmSecretScrubber` removes every configured provider key from any message that is logged or stored. `tests/Feature/Synthesis/LlmKeyLeakTest.php` guards this.
@@ -22,7 +22,7 @@ Concrete consequences:
 
 Laravel 13, PHP 8.4, Livewire 4 (class-based components in `app/Livewire`), Tailwind 4 via Vite, Horizon (production only), Reverb, Socialite (GitHub), knplabs/github-api, Prism (LLM, default Anthropic), Pest 5, Larastan + Pint.
 
-Local development uses Laravel Herd on Windows at http://sentinel-slop.test. Production target is Laravel Forge (Ubuntu). Nothing may depend on Herd at runtime.
+Local development uses Laravel Herd on Windows at http://sentinel-slop.test. Production target is AWS: one container image on ECS Fargate (a `web` service and a separate `worker` service for the `scans` queue), RDS MySQL, ElastiCache, ECR and a GitHub Actions deploy, all provisioned with Terraform. See the README's deployment section. Nothing may depend on Herd, Forge or the local filesystem layout at runtime: scan workspaces live on the task's ephemeral disk and are gone when the task is.
 
 ## Architecture
 
@@ -112,6 +112,8 @@ Line-level analysers cannot see absence or shape: no logging in a whole layer, n
 
 **Language coverage is stated, never implied.** `LanguageCoverage` maps each language in the stack to the language-specific analysers that ran on it (PHP: PHPStan, Pint, php-parser heuristics, Semgrep PHP rules; JavaScript/TypeScript: ESLint, Semgrep JS/TS rules; Python: Ruff) and lists the rest as "structural analysis only". The results page shows both, and the user prompt tells the reviewer to weight phases by each language's share of the code rather than by how many findings its tools produced. This came from a 490-file Django application whose review had two of three phases about its 35 JavaScript files, because that was where the analysers with opinions ran.
 
+**Large repositories (measured on laravel/framework, 3,400 files / 357k lines, and django/django, 7,000 files / 436k lines).** Nothing in the pipeline may hold per-file ASTs for the whole repository: `ClassIndex` once kept every name-resolved AST and peaked at 1 GB on laravel/framework, past the 128 MB CLI `memory_limit`, and the worker died mid-heuristic. It now keeps only the class registry and `UndefinedMembersHeuristic` re-parses file by file (`ClassIndex::resolve`); the whole pipeline then peaks around 130 MB for PHP and 110 MB for Python. Wall-clock on a laptop: PHPStan 197 s and Pint 215 s on 3,100 PHP files (each well inside the 300 s tool timeout and the 900 s stage timeout, but not by much on a slower box), synthesis 436 s (PHP) and 509 s (Python) of which the review call is 250-310 s for 24-27k output tokens; every other stage is seconds. Fetch is one GitHub request per blob, so a 5,000-file repository costs 5,000 of an installation's 5,000 hourly requests and a `403` rate limit currently surfaces as "GitHub could not serve". The file-count limit is applied before download but counts files preflight deletes anyway (Django: 2,537 locale catalogues, 1,382 binaries; Filament: 112 MB of images), which is what pushes real repositories over 5,000. Findings at that scale exposed four false Highs, all fixed with tests: `use function Illuminate\Support\enum_value` was a `missing-own-class` in 97 files (function and constant names are not class references), `Authenticatable $user` calling `save()` was an undefined method (interface- and abstract-typed receivers are never judged, and `use T { many as manyAlias; }` registers the alias), Ruff's `target-version = "py39"` made `aiter`/`BaseExceptionGroup` undefined names (the bundled config now targets the newest Python because the repository's `requires-python` is never read), and a Django `.js` template full of `{% %}` was an ESLint parse error (parse errors under `templates/`, `fixtures/`, `stubs/` are Low with a confirm caveat). Queue: `REDIS_QUEUE_RETRY_AFTER` must exceed the 900 s stage timeout (default now 960) or a second Horizon worker re-runs a stage that is still running.
+
 **Python reachability rule.** A package named in config (`INSTALLED_APPS`, `ROOT_URLCONF`) has the modules a framework loads by convention counted as referenced (`ImportGraph::FRAMEWORK_LOADED_MODULES`: models, views, urls, admin, apps, signals, tasks, forms, serializers, middleware, ...), not every module inside it: a stray module in an installed app is still reported, and the fixture plants one to prove it. Dynamic imports built from a prefix (`import_module(f"hc.integrations.{kind}.transport")`, ``import(`./locales/${lang}.ts`)``) become globs over that prefix. The profile text states this rule whenever Python is present so "0 unreferenced" cannot read as a clean bill of health.
 
 **Style preset vs prevailing style.** The profile's `style` section compares Pint's flagged files with the PHP file count and reads the repository's own `pint.json` preset as data (never applied). When 40%+ of files differ, the observation says the prevailing style differs from the Laravel preset checked and that a preset must be agreed before a formatter run, instead of "run Pint" touching most of the repository. Oversized-unit findings skip `database/`, `config/`, fixtures and lang directories (a 140-line seeder is a list). The `todo-marker` message says a TODO on working code is a stale comment to resolve or reference, never "implement the method"; only `unimplemented-method` (trivial body) means implement. The system prompt says repeated code is not automatically a problem, never to sweep every jscpd finding or propose a base class for template boilerplate, and that logging means caught exceptions, external-call failures and state transitions, never business-rule outcomes. Duplication clusters are reportable at `min_cluster_saved_lines` (100) saved, or three-plus occurrences saving at least half that.
@@ -135,17 +137,21 @@ Per-scan LLM model: `scans.llm_model` (validated against `sentinel.synthesis.mod
 `App\Scanning\Score\SlopScoreCalculator`, weights in `config/sentinel.php` → `score`:
 
 ```
-penalty  = Σ weight[severity] over critical/high/medium only   (critical 25, high 10, medium 4)
+penalty  = Σ weight[severity] over critical/high/medium only   (critical 25, high 10, medium 4),
+           excluding Structure findings and the size-scaling categories (score.size_categories: duplication, complexity)
 density  = penalty / sqrt(max(KLOC, 1))    size earns a sqrt allowance, never a free pass (KLOC from LinesOfCodeCounter)
 base     = 100 · exp(-(density / curve.scale) ^ curve.exponent)      (scale 65, exponent 1.4)
-struct   = min(structure_cap, base - base_with_structure_findings_included)   (cap 15: Structure findings move a score, never dominate it)
+size     = min(size_cap, base - base_with_size_scaling_findings_included)   (cap 15: duplication and oversized units cost points, never the whole score)
+struct   = min(structure_cap, base_with_size - base_with_structure_findings_included)   (cap 15: Structure findings move a score, never dominate it)
 low      = min(low_cap, round(low_count · low_points))     (0.1 point each, cap 5: style noise cannot sink or mask a score)
 supp     = min(suppression_cap, round(suppression_density * suppression_weight))   (default 2 points per suppression per 1k lines, cap 20)
-score    = max(0, round(base) - struct - low - supp)
+score    = max(0, round(base) - size - struct - low - supp)
 if any malware/secrets finding: score = min(score, critical_cap)   (default 40)
 ```
 
 Why this shape: a swallowed exception is as bad in a 20k-line app as in an 800-line one, so normalising by linear size (the first design) let a 21k-line repo with 49 medium findings score 97. Only medium-and-above findings drive the curve; lows (mostly Pint) are worth at most 5 points in total. Reference points with default weights: 1 medium in 5k lines → 99, 3 mediums in 1k lines → 91, 10 mediums in 800 lines → 60, 49 mediums + 181 lows in 21k lines (the dog-kennel repo) → 53, the same 49 mediums in 800 lines → 3. `curve.scale` is the density that scores ~37; raise it to be more lenient, raise `exponent` to widen the flat top.
+
+The size cap came from the other end of the range: laravel/framework (357k lines, 1,352 test files, 0.84 test ratio) scored 0 because 293 near-duplicate-function and 159 oversized-unit mediums, which accumulate with lines of code in any large codebase, put its density at 148. Duplicated blocks and oversized units are real work, so they cost points, but together at most `size_cap` (15), through the same mechanism as Structure: the difference the curve would make with them included, capped. The same scan showed three more sources of false volume that were fixed alongside: `SIM117` (nested `with`) had matched the `S` prefix and become 444 "security" mediums on Django (bandit is `S` followed by digits only); `BLE001`/`TRY002` and hygiene bugbear rules are Low (a pattern whose consequence Ruff has not read); and Medium-and-above security, slop, error-handling and complexity findings inside test files are Low with a "confirm it matters outside the test" caveat (`FindingNormaliser::testContext`: 197 hard-coded passwords in Django's tests, `eval()` in Laravel's memoisation test). Secrets and malware are never downgraded.
 
 ### Synthesis
 
@@ -166,7 +172,7 @@ Routes (all `auth`): `/dashboard` (repositories + scan buttons), `/scans` and `/
 - Scans are addressed by `uuid` in URLs and temp dir names; the integer `id` stays the primary key.
 - Tests are Pest. Feature tests use `RefreshDatabase` on in-memory SQLite. Fake GitHub via `Tests\Support\FakeGitHubAppApi` bound to `GitHubAppApi`. Never hit the network in tests.
 - Code must pass `vendor/bin/pint --test` and `vendor/bin/phpstan analyse` (level 6, Larastan) before a phase is done.
-- Windows note: Horizon needs `ext-pcntl`/`ext-posix`, so it does not run locally. Install with `--ignore-platform-req=ext-pcntl --ignore-platform-req=ext-posix` and use `queue:work` locally. Horizon runs on Forge.
+- Windows note: Horizon needs `ext-pcntl`/`ext-posix`, so it does not run locally. Install with `--ignore-platform-req=ext-pcntl --ignore-platform-req=ext-posix` and use `queue:work` locally. Horizon runs in the `worker` ECS task in production.
 
 ## Running things
 
@@ -193,4 +199,4 @@ Site: http://sentinel-slop.test (junction in Herd's Sites directory points at th
 3. Analysers (done): ProcessRunner, bundled configs, tool runners, slop heuristics, malicious-config canary tests, `sentinel:doctor`.
 4. Synthesis (done): rulesets, slop score, redaction, Prism, prompt and rules-file generation, undefined-member and suppression-density heuristics.
 5. UI (done): dashboard with scan buttons, live scan page, results (score, stack, prompts, rules file, findings, payload), history.
-6. Hardening and deploy prep: rate limiting, failure handling, sweeper, Horizon supervisors, README for Forge.
+6. Hardening and deploy prep (planned, see README "Deployment"): Dockerfile with pinned analyser binaries and a build-time `sentinel:doctor --strict`, private key from an env var, interrupted-scan recovery on worker start, Terraform modules, GitHub Actions to ECR to ECS.

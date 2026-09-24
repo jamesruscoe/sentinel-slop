@@ -204,9 +204,23 @@ final class SourceInventory
         $traverser->addVisitor(new NameResolver(null, ['preserveOriginalNames' => false, 'replaceNodes' => true]));
         $resolved = $traverser->traverse($ast);
 
+        // Function and constant names resolve to fully qualified names too (`use function Illuminate\Support\enum_value`)
+        // and are not class references: on laravel/framework they produced 97 missing-own-class findings.
+        $notClasses = [];
+        foreach (PhpSource::find($resolved, Node\Expr\FuncCall::class) as $call) {
+            if ($call->name instanceof Node\Name) {
+                $notClasses[$call->name->toString()] = true;
+            }
+        }
+        foreach (PhpSource::find($resolved, Node\Expr\ConstFetch::class) as $const) {
+            $notClasses[$const->name->toString()] = true;
+        }
+
         $references = [];
         foreach (PhpSource::find($resolved, Node\Name\FullyQualified::class) as $name) {
-            $references[$name->toString()] = true;
+            if (! isset($notClasses[$name->toString()])) {
+                $references[$name->toString()] = true;
+            }
         }
         foreach (PhpSource::find($resolved, Node\Stmt\Class_::class) as $class) {
             if ($class->namespacedName !== null) {

@@ -28,6 +28,20 @@ test('calls on classes with unresolvable parents are not reported', function () 
         ->and($findings->all()[0]->message)->toContain('bogus()');
 });
 
+test('interface-typed receivers and trait aliases are never undefined', function () {
+    $workspace = temporaryWorkspace();
+    // laravel/framework: Authenticatable $user calling save() (an Eloquent model implements it) and
+    // `use RetrievesMultipleKeys { many as manyAlias; }` were both reported as undefined methods.
+    file_put_contents($workspace->repoPath().'/Contract.php', "<?php\nnamespace App;\ninterface Contract { public function id(): int; }\nabstract class Base { abstract public function run(): void; }\n");
+    file_put_contents($workspace->repoPath().'/Caller.php', "<?php\nnamespace App;\nclass Caller { public function __construct(private Contract \$c, private Base \$b) {} public function a(Contract \$user, Base \$job): void { \$user->save(); \$job->retry(); \$this->c->save(); \$this->b->retry(); } }\n");
+    file_put_contents($workspace->repoPath().'/T.php', "<?php\nnamespace App;\ntrait T { public function many(): int { return 1; } }\nclass Store { use T { many as manyAlias; } public function a(): int { return \$this->manyAlias() + \$this->reallyMissing(); } }\n");
+
+    $findings = (new UndefinedMembersHeuristic)->run($workspace->repoPath());
+
+    expect(array_map(fn (Finding $f) => $f->filePath.' '.$f->message, $findings->all()))->toHaveCount(1)
+        ->and($findings->all()[0]->message)->toContain('reallyMissing()');
+});
+
 test('suppression comments are counted per thousand lines and reported as findings', function () {
     $stats = (new SuppressionDensityHeuristic)->analyse(fixturePath('sloppy-laravel'));
 

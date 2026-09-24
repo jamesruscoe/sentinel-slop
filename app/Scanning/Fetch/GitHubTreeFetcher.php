@@ -99,6 +99,7 @@ final class GitHubTreeFetcher implements RepositoryFetcher
         $skipped = [];
         $treePaths = [];
         $skippedDirectoryCounts = [];
+        $notAnalysedCounts = [];
         $count = 0;
         $bytes = 0;
 
@@ -137,6 +138,22 @@ final class GitHubTreeFetcher implements RepositoryFetcher
                 continue;
             }
 
+            // Files no analyser reads and files preflight would delete are decided from the path here, so they are
+            // never downloaded and never counted: the limits judge what would be analysed (Django's 2,537 locale
+            // catalogues and Filament's 112 MB of images pushed both past limits that never applied to their code).
+            if ($limits->isNotAnalysed($safePath)) {
+                $extension = '*.'.strtolower(pathinfo($safePath, PATHINFO_EXTENSION));
+                $notAnalysedCounts[$extension] = ($notAnalysedCounts[$extension] ?? 0) + 1;
+
+                continue;
+            }
+            if ($limits->isGenerated($safePath)) {
+                $minified = preg_match('/\.min\.(js|css)$/i', $safePath) === 1;
+                $skipped[] = new SkippedFile($safePath, $minified ? SkipReason::Minified : SkipReason::Generated, 'not downloaded');
+
+                continue;
+            }
+
             $size = (int) ($entry['size'] ?? 0);
             if ($size > $limits->limitFor($safePath)) {
                 $skipped[] = new SkippedFile($safePath, SkipReason::Oversized, "{$size} bytes");
@@ -158,6 +175,9 @@ final class GitHubTreeFetcher implements RepositoryFetcher
 
         foreach ($skippedDirectoryCounts as $directory => $fileCount) {
             $skipped[] = new SkippedFile($directory.'/', SkipReason::DependencyDirectory, "{$fileCount} files not downloaded");
+        }
+        foreach ($notAnalysedCounts as $extension => $fileCount) {
+            $skipped[] = new SkippedFile($extension, SkipReason::NotAnalysed, "{$fileCount} files not downloaded");
         }
 
         return [$blobs, $skipped, $treePaths];

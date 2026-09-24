@@ -20,23 +20,20 @@ final class ClassIndex
     /** @var array<string, array{kind: string, parent: string|null, interfaces: list<string>, traits: list<string>, methods: array<string, true>, properties: array<string, string|null>, abstract: bool, magic: bool}> */
     private array $classes = [];
 
-    /** @var array<string, array<Node>> */
-    private array $resolvedAsts = [];
-
+    /**
+     * Only the registry is kept. Retaining every name-resolved AST made the
+     * index grow with the repository (1 GB on laravel/framework's 3,100 files,
+     * past the CLI memory limit); callers that need an AST re-parse the file.
+     */
     public static function build(string $repoPath): self
     {
         $index = new self;
 
         foreach (SourceFiles::in($repoPath, SourceFiles::PHP) as $file) {
-            $ast = PhpSource::parse($file['absolute']);
-            if ($ast === null) {
+            $resolved = self::resolve($file['absolute']);
+            if ($resolved === null) {
                 continue;
             }
-
-            $traverser = new NodeTraverser;
-            $traverser->addVisitor(new NameResolver);
-            $resolved = $traverser->traverse($ast);
-            $index->resolvedAsts[$file['path']] = $resolved;
 
             foreach (PhpSource::find($resolved, Node\Stmt\ClassLike::class) as $classLike) {
                 $index->register($classLike);
@@ -47,16 +44,37 @@ final class ClassIndex
     }
 
     /**
-     * @return array<string, array<Node>> Relative path => name-resolved AST.
+     * Parse one file with names resolved to fully qualified form.
+     *
+     * @return array<Node>|null
      */
-    public function asts(): array
+    public static function resolve(string $absolutePath): ?array
     {
-        return $this->resolvedAsts;
+        $ast = PhpSource::parse($absolutePath);
+        if ($ast === null) {
+            return null;
+        }
+
+        $traverser = new NodeTraverser;
+        $traverser->addVisitor(new NameResolver);
+
+        return $traverser->traverse($ast);
     }
 
     public function has(string $fqcn): bool
     {
         return isset($this->classes[strtolower($fqcn)]);
+    }
+
+    /**
+     * A concrete class: calls on an interface- or abstract-typed receiver may
+     * be answered by a subclass this index cannot see, so they are never judged.
+     */
+    public function isConcrete(string $fqcn): bool
+    {
+        $entry = $this->classes[strtolower($fqcn)] ?? null;
+
+        return $entry !== null && $entry['kind'] === 'class' && ! $entry['abstract'];
     }
 
     public function isAbstract(string $fqcn): bool
@@ -179,6 +197,12 @@ final class ClassIndex
         foreach ($node->getTraitUses() as $use) {
             foreach ($use->traits as $trait) {
                 $traits[] = $trait->toString();
+            }
+            // `use RetrievesMultipleKeys { many as manyAlias; }` declares manyAlias on this class.
+            foreach ($use->adaptations as $adaptation) {
+                if ($adaptation instanceof Node\Stmt\TraitUseAdaptation\Alias && $adaptation->newName !== null) {
+                    $methods[strtolower($adaptation->newName->toString())] = true;
+                }
             }
         }
 

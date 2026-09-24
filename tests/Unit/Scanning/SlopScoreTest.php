@@ -122,6 +122,20 @@ test('structure findings move the score but never by more than the cap', functio
         ->and($mixed->scoreWithoutStructure)->toBe(60)->and($mixed->score)->toBe(45)->and($mixed->penalty)->toBe(40);
 });
 
+test('duplication and complexity findings cost points but never more than the size cap', function () {
+    // laravel/framework: 293 duplication and 159 complexity mediums in 357k lines took the score to 0.
+    $sizeScaling = [...array_fill(0, 293, scoreFinding('medium', 'duplication')), ...array_fill(0, 159, scoreFinding('medium', 'complexity'))];
+    $framework = calculator()->calculate(new FindingCollection($sizeScaling), 356590);
+    $withDefects = calculator()->calculate(new FindingCollection([...$sizeScaling, ...array_fill(0, 20, scoreFinding('high', 'security'))]), 356590);
+    $few = calculator()->calculate(new FindingCollection([scoreFinding('medium', 'duplication')]), 5000);
+
+    expect($framework->score)->toBe(85)->and($framework->sizePenalty)->toBe(15)->and($framework->sizeCount)->toBe(452)->and($framework->penalty)->toBe(0)
+        // Defect findings keep their full weight on top of the capped size penalty.
+        ->and($withDefects->penalty)->toBe(200)->and($withDefects->sizePenalty)->toBe(15)->and($withDefects->score)->toBeLessThan(80)
+        ->and($few->score)->toBe(99)->and($few->sizePenalty)->toBe(1)
+        ->and(ScoreResult::fromArray($framework->toArray())->sizePenalty)->toBe(15);
+});
+
 test('lines of code counts non-blank, non-comment lines of source files only', function () {
     $workspace = temporaryWorkspace();
     file_put_contents($workspace->repoPath().'/a.php', "<?php\n\n// comment\n/* block */\n\$a = 1;\n\$b = 2;\n");

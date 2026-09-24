@@ -7,6 +7,7 @@ namespace App\Scanning\Analysers;
 use App\Scanning\Data\Finding;
 use App\Scanning\Data\FindingCollection;
 use App\Scanning\Data\Stack;
+use App\Scanning\Enums\Severity;
 use App\Scanning\Exceptions\AnalyserFailedException;
 
 /**
@@ -61,9 +62,17 @@ final class EslintAnalyser extends ProcessAnalyser
                 $fatal = (bool) ($message['fatal'] ?? false);
                 [$category, $severity] = CategoryMapper::eslint($message['ruleId'] ?? null, (int) ($message['severity'] ?? 1), $fatal);
                 $line = isset($message['line']) ? (int) $message['line'] : null;
+                $text = (string) ($message['message'] ?? '');
+
+                // A .js file under templates/ or fixtures/ is often not JavaScript at all (Django's i18n_catalog.js is a
+                // template with {% %} tags; test fixtures hold deliberately broken input), so a parse error there is Low.
+                if ($fatal && preg_match('~(^|/)(templates?|fixtures?|__fixtures__|stubs?|testdata)/~', $relative) === 1) {
+                    $severity = Severity::Low;
+                    $text .= ' Confirm this file is real JavaScript rather than a template or test fixture before treating it as broken.';
+                }
 
                 $findings->add(new Finding('eslint', $message['ruleId'] ?? ($fatal ? 'parse-error' : null), $category, $severity, $relative, $line,
-                    (string) ($message['message'] ?? ''), $this->snippetFrom($path, $relative, $line)));
+                    $text, $this->snippetFrom($path, $relative, $line)));
             }
         }
 

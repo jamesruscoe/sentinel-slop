@@ -38,7 +38,14 @@ final class UndefinedMembersHeuristic implements Heuristic
         $index = ClassIndex::build($path);
         $findings = new FindingCollection;
 
-        foreach ($index->asts() as $file => $ast) {
+        // Second pass re-parses file by file so memory stays flat whatever the repository size.
+        foreach (SourceFiles::in($path, SourceFiles::PHP) as $source) {
+            $file = $source['path'];
+            $ast = ClassIndex::resolve($source['absolute']);
+            if ($ast === null) {
+                continue;
+            }
+
             foreach (PhpSource::find($ast, Node\Stmt\Class_::class) as $class) {
                 if ($class->namespacedName === null || $class->isAbstract()) {
                     continue;
@@ -103,13 +110,15 @@ final class UndefinedMembersHeuristic implements Heuristic
 
             $type = $paramTypes[$var->name] ?? null;
 
-            return $type !== null && $index->has($type) ? [$type, $index->resolvableMethods($type)] : [null, null];
+            // Interface- and abstract-typed receivers are skipped: the object is a subclass the index may not see
+            // (Authenticatable $user calling save() on an Eloquent model, on laravel/framework itself).
+            return $type !== null && $index->isConcrete($type) ? [$type, $index->resolvableMethods($type)] : [null, null];
         }
 
         if ($var instanceof Node\Expr\PropertyFetch && $var->var instanceof Node\Expr\Variable && $var->var->name === 'this' && $var->name instanceof Node\Identifier) {
             $type = $ownProperties[$var->name->toString()] ?? null;
 
-            return $type !== null && $index->has($type) ? [$type, $index->resolvableMethods($type)] : [null, null];
+            return $type !== null && $index->isConcrete($type) ? [$type, $index->resolvableMethods($type)] : [null, null];
         }
 
         return [null, null];

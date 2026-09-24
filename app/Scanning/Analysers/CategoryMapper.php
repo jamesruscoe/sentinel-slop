@@ -72,17 +72,25 @@ final class CategoryMapper
         return match (true) {
             str_starts_with($code, 'E9') || $code === 'F821' || $code === 'F822' || $code === 'F823' => [FindingCategory::TypeSafety, Severity::High],
             in_array($code, ['F401', 'F841', 'F811', 'F842'], true) || str_starts_with($code, 'ARG') || str_starts_with($code, 'ERA') => [FindingCategory::DeadCode, Severity::Low],
+            // Star imports are a style choice, not a defect.
+            in_array($code, ['F403', 'F405'], true) => [FindingCategory::Style, Severity::Low],
             str_starts_with($code, 'F') => [FindingCategory::TypeSafety, Severity::Medium],
             // exec/eval, shell=True, os.system with a variable: High. S324 ("probable" insecure hash) is Ruff guessing
-            // at intent (sha1 for a cache key is fine) and stays Medium.
+            // at intent (sha1 for a cache key is fine) and stays Medium. Only S followed by digits is bandit: SIM117
+            // (nested `with`) once matched here and became 444 "security" mediums on Django.
             in_array($code, ['S102', 'S307', 'S602', 'S605', 'S609'], true) => [FindingCategory::Security, Severity::High],
-            str_starts_with($code, 'S') => [FindingCategory::Security, Severity::Medium],
-            str_starts_with($code, 'BLE') || in_array($code, ['B012', 'B030', 'E722', 'TRY002', 'TRY200', 'TRY201', 'TRY302', 'TRY400', 'TRY401'], true) => [FindingCategory::ErrorHandling, Severity::Medium],
-            // raise-without-from inside except loses the chain: worth fixing, not a defect on its own.
-            $code === 'B904' => [FindingCategory::ErrorHandling, Severity::Low],
-            str_starts_with($code, 'TRY') => [FindingCategory::ErrorHandling, Severity::Low],
+            preg_match('/^S\d/', $code) === 1 => [FindingCategory::Security, Severity::Medium],
+            // A bare `except:` also swallows KeyboardInterrupt and SystemExit: wrong on its own terms.
+            in_array($code, ['B012', 'B030', 'E722', 'TRY200', 'TRY201', 'TRY302', 'TRY400', 'TRY401'], true) => [FindingCategory::ErrorHandling, Severity::Medium],
+            // `except Exception` (BLE001) and `raise Exception(...)` (TRY002) name a pattern whose consequence depends on
+            // the handler body and the callers, which Ruff has not read: Low, like catch-only-logs in PHP.
+            str_starts_with($code, 'BLE') || $code === 'B904' || str_starts_with($code, 'TRY') => [FindingCategory::ErrorHandling, Severity::Low],
             str_starts_with($code, 'C9') => [FindingCategory::Complexity, Severity::Medium],
-            str_starts_with($code, 'B') || str_starts_with($code, 'PLE') => [FindingCategory::TypeSafety, Severity::Medium],
+            // Bugbear rules that describe a bug on their own terms (mutable default, closure over a loop variable,
+            // assert on a tuple, `except` with a misspelt tuple). The rest of B (useless expression, unused loop
+            // variable, getattr with a constant) is hygiene.
+            in_array($code, ['B002', 'B006', 'B015', 'B017', 'B020', 'B021', 'B022', 'B023', 'B032', 'B033', 'B034', 'B035'], true) || str_starts_with($code, 'PLE') => [FindingCategory::TypeSafety, Severity::Medium],
+            str_starts_with($code, 'B') => [FindingCategory::TypeSafety, Severity::Low],
             str_starts_with($code, 'T20') => [FindingCategory::Slop, Severity::Low],
             str_starts_with($code, 'PLW') => [FindingCategory::Other, Severity::Low],
             default => [FindingCategory::Style, Severity::Low],

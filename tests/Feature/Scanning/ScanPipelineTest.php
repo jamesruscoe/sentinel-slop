@@ -64,7 +64,8 @@ test('a scan runs through the pipeline, stores results and deletes its files', f
         ->and($scan->llm_model)->toBe(config('sentinel.synthesis.model'))
         ->and($scan->detected_stack['frameworks'])->toBe(['laravel', 'livewire'])
         ->and($scan->detected_stack['languages'])->toBe(['PHP' => 9000, 'Blade' => 500])
-        ->and($scan->skipped_files['counts'])->toBe(['binary' => 1, 'generated' => 1, 'minified' => 1])
+        // The binary is skipped by extension during fetch planning (not_analysed); the generated and minified files by pattern.
+        ->and($scan->skipped_files['counts'])->toBe(['generated' => 1, 'minified' => 1, 'not_analysed' => 1])
         ->and($scan->slop_score)->toBeInt()
         ->and($scan->lines_of_code)->toBeGreaterThan(0)
         ->and($scan->suppression_count)->toBe(0)

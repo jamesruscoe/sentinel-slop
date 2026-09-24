@@ -6,6 +6,9 @@ namespace App\Scanning\Normalise;
 
 use App\Scanning\Data\Finding;
 use App\Scanning\Data\FindingCollection;
+use App\Scanning\Enums\FindingCategory;
+use App\Scanning\Enums\Severity;
+use App\Scanning\Profile\Naming;
 
 /**
  * Turns raw analyser output into the canonical findings shape: relative
@@ -24,10 +27,17 @@ final class FindingNormaliser
         private readonly int $maxSnippetLines = 6,
     ) {}
 
+    /**
+     * Categories whose Medium-and-above findings are about production behaviour. In a test file the same pattern is
+     * usually test practice (a hard-coded password, an eval in a memoisation test, a swallowed exception around a
+     * teardown, a 900-line test class), so they become Low with a caveat. Secrets and malware are never downgraded.
+     */
+    private const TEST_CONTEXT_CATEGORIES = [FindingCategory::Security, FindingCategory::Slop, FindingCategory::ErrorHandling, FindingCategory::Complexity];
+
     public function normalise(FindingCollection $findings, ?string $repoPath = null): FindingCollection
     {
         $locator = $repoPath !== null ? new PhpSymbolLocator($repoPath) : null;
-        $normalised = $findings->map(fn (Finding $f) => $this->redactor->redact($this->locate($this->clean($f, $repoPath), $locator)));
+        $normalised = $findings->map(fn (Finding $f) => $this->redactor->redact($this->testContext($this->locate($this->clean($f, $repoPath), $locator))));
         $deduped = $this->deduplicator->dedupe($normalised);
 
         $sorted = $deduped->all();
@@ -60,6 +70,20 @@ final class FindingNormaliser
             'line' => $finding->line !== null && $finding->line > 0 ? $finding->line : null,
             'message' => $message,
             'snippet' => $this->clampSnippet($finding->snippet),
+        ]);
+    }
+
+    private function testContext(Finding $finding): Finding
+    {
+        if ($finding->severity->rank() < Severity::Medium->rank()
+            || ! in_array($finding->category, self::TEST_CONTEXT_CATEGORIES, true)
+            || ! Naming::isTestName($finding->filePath)) {
+            return $finding;
+        }
+
+        return $finding->with([
+            'severity' => Severity::Low->value,
+            'message' => rtrim($finding->message, '. ').'. This is in a test file: confirm it matters outside the test before treating it as a defect.',
         ]);
     }
 
