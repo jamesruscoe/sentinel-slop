@@ -4,6 +4,7 @@ namespace App\Jobs\Scan;
 
 use App\Enums\ScanStatus;
 use App\Models\Scan;
+use App\Scanning\Analysers\AnalyserFailure;
 use App\Scanning\Data\FindingCollection;
 use App\Scanning\Data\Stack;
 use App\Scanning\Enums\TargetEditor;
@@ -61,6 +62,7 @@ class SynthesisePrompts extends ScanStageJob
                 'by_kind' => array_map('intval', (array) ($suppressions['by_kind'] ?? [])),
             ],
             profile: $profile !== null ? RepositoryProfile::fromArray($profile) : null,
+            analyserFailures: AnalyserFailure::list($workspace->readArtifact('analyser-failures')),
         );
 
         try {

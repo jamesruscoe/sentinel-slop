@@ -18,11 +18,12 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property array<string, mixed>|null $profile RepositoryProfile::toArray()
  * @property array{summary: string, strengths: list<string>, structural_problems: list<array{title: string, evidence: string, impact: string}>, recommended_refactors: list<array{title: string, rationale: string, scope: string, effort: string}>}|null $assessment
  * @property int|null $slop_score_without_structure
+ * @property list<array{tool: string, kind: string, message: string, seconds: int}>|null $analyser_failures analysers that timed out or crashed; the scan continued without them
  * @property array{system: string, user: string, model: string, truncated?: bool, usage?: array{finish_reason: string, input_tokens: int, output_tokens: int}, calls?: list<array{stage: string, seconds?: float, finish_reason: string, input_tokens: int, output_tokens: int}>, phase_prompts?: array<int, string>}|null $synthesis_payload
  */
 #[Fillable([
     'repository_id', 'user_id', 'status', 'commit_sha', 'slop_score', 'slop_score_without_structure', 'detected_stack',
-    'skipped_files', 'profile', 'lines_of_code', 'suppression_count', 'suppression_density', 'error_message', 'synthesis_error', 'synthesis_payload', 'assessment',
+    'skipped_files', 'analyser_failures', 'profile', 'lines_of_code', 'suppression_count', 'suppression_density', 'error_message', 'synthesis_error', 'synthesis_payload', 'assessment',
     'started_at', 'finished_at', 'llm_model',
 ])]
 class Scan extends Model
@@ -41,6 +42,7 @@ class Scan extends Model
             'slop_score_without_structure' => 'integer',
             'detected_stack' => 'array',
             'skipped_files' => 'array',
+            'analyser_failures' => 'array',
             'profile' => 'array',
             'lines_of_code' => 'integer',
             'suppression_count' => 'integer',

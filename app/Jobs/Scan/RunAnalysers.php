@@ -28,7 +28,10 @@ class RunAnalysers extends ScanStageJob
         foreach (app(AnalyserRegistry::class)->supporting($stack) as $analyser) {
             $this->progress($scan, "Running {$analyser->name()}");
 
-            $findings = $analyser->run($workspace->repoPath());
+            $findings = $this->attempt($scan, $workspace, $analyser->name(), fn () => $analyser->run($workspace->repoPath()));
+            if ($findings === null) {
+                continue;
+            }
 
             $workspace->writeArtifact('findings/'.$analyser->name(), ['tool' => $analyser->name(), 'findings' => $findings->toArray()]);
         }

@@ -10,6 +10,7 @@ use App\Scanning\Data\AnalyserOptions;
 use App\Scanning\Data\ProcessResult;
 use App\Scanning\Data\ProcessSpec;
 use App\Scanning\Exceptions\AnalyserFailedException;
+use App\Scanning\Exceptions\AnalyserTimedOutException;
 use App\Scanning\Process\ToolLocator;
 use App\Scanning\Support\FileWalker;
 
@@ -52,7 +53,7 @@ abstract class ProcessAnalyser implements Analyser
         $result = $this->runner->run(new ProcessSpec($command, $cwd, $this->options->timeoutSeconds, $env));
 
         if ($result->timedOut) {
-            throw new AnalyserFailedException("{$this->name()} exceeded the {$this->options->timeoutSeconds}s timeout.");
+            throw new AnalyserTimedOutException($this->name(), $this->options->timeoutSeconds);
         }
 
         return $result;

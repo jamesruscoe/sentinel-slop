@@ -5,7 +5,7 @@ Detected stack:
 - Languages: {{ implode(', ', array_map(fn ($lang, $pct) => "$lang ($pct%)", array_keys($stack->languagePercentages()), $stack->languagePercentages())) ?: 'unknown' }}
 - Frameworks: {{ $stack->describeFrameworks() ?: 'none detected' }}
 - Runtimes declared: {{ $stack->describeRuntimes() ?: 'not declared' }}
-- Analyser coverage: {{ \App\Scanning\Analysers\LanguageCoverage::sentence($stack) }}
+- Analyser coverage: {{ \App\Scanning\Analysers\LanguageCoverage::sentence($stack, $analyserFailures ?? []) }}
 
 ## The review's summary
 

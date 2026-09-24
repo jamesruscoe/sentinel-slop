@@ -67,6 +67,7 @@ final class PromptSynthesiser
         $user = $this->templates->render('user', [
             'repository' => $request->repositoryName,
             'stack' => $request->stack,
+            'analyserFailures' => $request->analyserFailures,
             'score' => $request->score,
             'profile' => $profileText,
             'findings' => $payload['text'],
@@ -159,6 +160,7 @@ final class PromptSynthesiser
             $phaseUser = $this->templates->render('phase-user', [
                 'repository' => $request->repositoryName,
                 'stack' => $request->stack,
+                'analyserFailures' => $request->analyserFailures,
                 'score' => $request->score,
                 'assessment' => $assessment,
                 'outline' => $outline,

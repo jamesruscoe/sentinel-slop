@@ -29,13 +29,19 @@ class RunSlopHeuristics extends ScanStageJob
         foreach (app(HeuristicRegistry::class)->supporting($stack) as $heuristic) {
             $this->progress($scan, "Checking {$heuristic->name()}");
 
-            if ($heuristic instanceof SuppressionDensityHeuristic) {
+            $findings = $this->attempt($scan, $workspace, $heuristic->name(), function () use ($heuristic, $scan, $workspace) {
+                if (! $heuristic instanceof SuppressionDensityHeuristic) {
+                    return $heuristic->run($workspace->repoPath());
+                }
+
                 $stats = $heuristic->analyse($workspace->repoPath());
-                $findings = $stats['findings'];
                 $scan->forceFill(['suppression_count' => $stats['count'], 'suppression_density' => $stats['density']])->save();
                 $workspace->writeArtifact('suppressions', ['count' => $stats['count'], 'lines' => $stats['lines'], 'density' => $stats['density'], 'by_kind' => $stats['by_kind']]);
-            } else {
-                $findings = $heuristic->run($workspace->repoPath());
+
+                return $stats['findings'];
+            });
+            if ($findings === null) {
+                continue;
             }
 
             $workspace->writeArtifact('findings/'.$heuristic->name(), ['tool' => $heuristic->name(), 'findings' => $findings->toArray()]);

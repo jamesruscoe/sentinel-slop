@@ -28,33 +28,74 @@ final class LanguageCoverage
     /** Applied to every repository regardless of language. */
     public const UNIVERSAL = ['repository profile and absence checks', 'jscpd duplication', 'gitleaks secrets'];
 
+    /** Analyser tool name => how it appears in ANALYSERS / UNIVERSAL, so a failed tool can be struck off. */
+    private const TOOL_DISPLAY = [
+        'phpstan' => 'PHPStan',
+        'pint' => 'Pint',
+        'eslint' => 'ESLint',
+        'ruff' => 'Ruff',
+        'semgrep' => ['Semgrep PHP rules', 'Semgrep JS/TS rules'],
+        'jscpd' => 'jscpd duplication',
+        'gitleaks' => 'gitleaks secrets',
+    ];
+
     /**
-     * @return array{analysed: array<string, list<string>>, structural_only: list<string>, universal: list<string>}
+     * @param  list<AnalyserFailure>  $failures  tools that timed out or crashed: struck off the lists and stated
+     * @return array{analysed: array<string, list<string>>, structural_only: list<string>, universal: list<string>, failed: list<string>}
      */
-    public static function describe(Stack $stack): array
+    public static function describe(Stack $stack, array $failures = []): array
     {
+        $struck = [];
+        foreach ($failures as $failure) {
+            foreach ((array) (self::TOOL_DISPLAY[$failure->tool] ?? []) as $display) {
+                $struck[$display] = true;
+            }
+        }
+
         $analysed = [];
         $structuralOnly = [];
         foreach ($stack->languagePercentages() as $language => $share) {
             if ($share < 1 || in_array($language, self::NOT_CODE, true)) {
                 continue;
             }
-            if (isset(self::ANALYSERS[$language])) {
-                $analysed[$language] = self::ANALYSERS[$language];
+            $tools = array_values(array_filter(self::ANALYSERS[$language] ?? [], fn (string $tool) => ! isset($struck[$tool])));
+            if ($tools !== []) {
+                $analysed[$language] = $tools;
             } else {
                 $structuralOnly[] = $language;
             }
         }
 
-        return ['analysed' => $analysed, 'structural_only' => $structuralOnly, 'universal' => self::UNIVERSAL];
+        $failed = [];
+        foreach ($failures as $failure) {
+            $affected = [];
+            foreach ((array) (self::TOOL_DISPLAY[$failure->tool] ?? []) as $display) {
+                foreach (self::ANALYSERS as $language => $tools) {
+                    if (in_array($display, $tools, true) && ($stack->languagePercentages()[$language] ?? 0) >= 1) {
+                        $affected[$language] = isset($analysed[$language]) ? "{$language} had ".self::join($analysed[$language]).' only' : "{$language} had no language-specific analyser";
+                    }
+                }
+            }
+            $failed[] = $failure->sentence().($affected !== [] ? '; '.implode('; ', $affected) : '').'.';
+        }
+
+        return [
+            'analysed' => $analysed,
+            'structural_only' => $structuralOnly,
+            'universal' => array_values(array_filter(self::UNIVERSAL, fn (string $tool) => ! isset($struck[$tool]))),
+            'failed' => $failed,
+        ];
     }
 
     /**
-     * One sentence for prompts and pages.
+     * One sentence for prompts and pages. A failed tool is named with what
+     * the language was left with, so its silence is never read as clean.
+     *
+     * @param  list<AnalyserFailure>  $failures
      */
-    public static function sentence(Stack $stack): string
+    public static function sentence(Stack $stack, array $failures = []): string
     {
-        $coverage = self::describe($stack);
+        $coverage = self::describe($stack, $failures);
         $parts = [];
         foreach ($coverage['analysed'] as $language => $tools) {
             $parts[] = $language.' ('.implode(', ', $tools).')';
@@ -63,7 +104,23 @@ final class LanguageCoverage
         if ($coverage['structural_only'] !== []) {
             $sentence .= ' '.implode(', ', $coverage['structural_only']).' had structural analysis only (the profile, duplication and secrets scanning): findings in those files are shape and absence, never line-level correctness.';
         }
+        foreach ($coverage['failed'] as $failed) {
+            $sentence .= ' '.ucfirst($failed).' Its absence is not a clean result: nothing it would have reported is in the findings.';
+        }
 
         return $sentence;
+    }
+
+    /**
+     * @param  list<string>  $items
+     */
+    private static function join(array $items): string
+    {
+        if (count($items) <= 1) {
+            return implode('', $items);
+        }
+        $last = array_pop($items);
+
+        return implode(', ', $items).' and '.$last;
     }
 }
