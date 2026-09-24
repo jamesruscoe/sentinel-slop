@@ -14,6 +14,14 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->validateCsrfTokens(except: ['webhooks/github']);
+
+        // Behind the ALB the request arrives over plain HTTP; the proxy's X-Forwarded-* headers are trusted
+        // only from the addresses in TRUSTED_PROXIES (the VPC CIDR in production), so generated URLs and
+        // secure cookies are https. Unset locally, where nothing is proxied.
+        $proxies = array_values(array_filter(array_map('trim', explode(',', (string) env('TRUSTED_PROXIES', '')))));
+        if ($proxies !== []) {
+            $middleware->trustProxies(at: $proxies);
+        }
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(

@@ -1,0 +1,8 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+domain_name          = "sentinel.example.com"
+hosted_zone_name     = "example.com"
+github_repository    = "jamesruscoe/sentinel-slop"
+github_app_id        = "123456"
+github_app_slug      = "sentinel-slop"
+github_app_client_id = "Iv1.abcdef0123456789"
+admin_github_usernames = "jamesruscoe"

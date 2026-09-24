@@ -139,21 +139,34 @@ A scan that is mid-pipeline when the worker is replaced: ECS sends SIGTERM, Hori
 ```
 infra/
   envs/
-    prod/            backend.tf (S3 state, DynamoDB lock), main.tf wiring the modules, terraform.tfvars
+    prod/            versions.tf (providers, S3 backend), main.tf wiring the modules, variables.tf, outputs.tf,
+                     backend.hcl.example and terraform.tfvars.example (copy both, fill in, both gitignored)
   modules/
-    network/         VPC, two public subnets, security groups (alb, tasks, rds, redis)
-    ecr/             repository, lifecycle policy keeping the last 10 images
-    rds/             MySQL 8 db.t4g.micro, subnet group, parameter group, password in Secrets Manager
-    redis/           ElastiCache Valkey cache.t4g.micro, auth token in Secrets Manager
-    secrets/         the secret shells (values written out of band, never in state)
-    alb/             ALB, ACM certificate, 443 listener, target groups for web (and reverb), 80 to 443 redirect
-    ecs-cluster/     cluster, CloudWatch log groups
-    ecs-service/     generic task definition + service; instantiated three times (web, worker, reverb) with command, size, secrets list and target group as inputs
-    iam/             execution role per service scoped to its secret ARNs, empty task roles, the GitHub OIDC deploy role
-    dns/             Route 53 records for the ALB
+    network/         VPC, two public + two private subnets, no NAT; security groups for alb, tasks, rds, redis
+    ecr/             repository (immutable tags, scan on push), lifecycle policy keeping the last 10 images
+    acm/             certificate for the domain, DNS-validated in the existing hosted zone
+    alb/             ALB, 443 listener with the certificate, 80 to 443 redirect, web target group (/up)
+    secrets/         one Secrets Manager secret per value under sentinel-slop/prod/; APP_KEY and DB_PASSWORD generated,
+                     the GitHub App and Anthropic values are shells you fill before the first deploy
+    rds/             MySQL 8.4 db.t4g.micro, 20 GB gp3 autoscaling to 100, encrypted, 7-day backups, deletion protection
+    redis/           ElastiCache Valkey cache.t4g.micro, one node, reachable from the tasks' security group only
+    ecs-cluster/     cluster (Fargate) and one CloudWatch log group per service, 30-day retention
+    iam/             one execution role per service scoped to its secret ARNs, an empty task role,
+                     the GitHub Actions OIDC deploy role (main branch of this repository only)
+    ecs-service/     generic task definition + service, instantiated for web, worker and scheduler with role,
+                     size, secrets and target group as inputs; task_definition ignored after creation (the pipeline registers revisions)
 ```
 
-Mirror the other application's module conventions where they differ; the split that matters is `ecs-service` being generic and `iam` producing one execution role per service.
+Bring it up in this order:
+
+1. Create the state bucket and lock table once (commands in `backend.hcl.example`), copy the two example files and fill them in.
+2. `terraform init -backend-config=backend.hcl && terraform plan`, then `apply`. RDS and the certificate validation take about ten minutes.
+3. Write the four external secrets (`terraform output secret_arns` lists them): the production GitHub App's client secret, webhook secret and private key (`base64 -w0 app.pem`), and the Anthropic key.
+4. Build and push the first image with the `bootstrap` tag, or let the pipeline's first run register the SHA-tagged revision; the services start once an image exists at the tag their task definition names.
+5. Run the migrations once as a one-off task (the pipeline does this on every deploy): `aws ecs run-task` on the web task definition with `CONTAINER_ROLE=migrate` and command `php artisan migrate --force`.
+6. Point the production GitHub App at `https://<domain>` (see "Production GitHub App").
+
+Set `create_oidc_provider = false` on the iam module if the account already has the GitHub OIDC provider from the other application. The migration one-off task and the `TRUSTED_PROXIES` variable (the VPC CIDR) are the only things the application needs from the infrastructure beyond its environment.
 
 ### Production GitHub App
 

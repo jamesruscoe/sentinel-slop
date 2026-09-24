@@ -41,3 +41,8 @@ Thumbs.db
 /tests/Fixtures/repos/**/vendor/
 /tests/Fixtures/repos/**/node_modules/
 /storage/sentinel-tools
+infra/envs/*/backend.hcl
+infra/envs/*/terraform.tfvars
+infra/**/.terraform/
+infra/**/*.tfstate*
+infra/**/.terraform.lock.hcl
