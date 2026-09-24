@@ -5,22 +5,26 @@ declare(strict_types=1);
 namespace App\Scanning\Fetch;
 
 use App\Scanning\Contracts\GitHubContentSource;
+use App\Scanning\Exceptions\FetchLimitExceededException;
 use App\Scanning\Exceptions\RepositoryUnavailableException;
 use Github\AuthMethod;
 use Github\Client;
 use Github\Exception\RuntimeException as GitHubRuntimeException;
+use GuzzleHttp\Client as GuzzleClient;
+use GuzzleHttp\Exception\ClientException;
+use GuzzleHttp\Exception\GuzzleException;
 use SensitiveParameter;
 
 final class KnpGitHubContentSource implements GitHubContentSource
 {
-    public function __construct(private readonly Client $client) {}
+    public function __construct(private readonly Client $client, #[SensitiveParameter] private readonly ?string $token = null) {}
 
     public static function withToken(#[SensitiveParameter] string $token): self
     {
         $client = new Client;
         $client->authenticate($token, null, AuthMethod::ACCESS_TOKEN);
 
-        return new self($client);
+        return new self($client, $token);
     }
 
     public function getRepository(string $owner, string $repo): array
@@ -45,27 +49,68 @@ final class KnpGitHubContentSource implements GitHubContentSource
         return $sha;
     }
 
-    public function getTree(string $owner, string $repo, string $sha): array
+    public function downloadArchive(string $owner, string $repo, string $ref, string $destination, int $maxBytes): void
     {
-        /** @var array{sha?: string, truncated?: bool, tree?: list<array{path: string, mode: string, type: string, sha: string, size?: int}>} $data */
-        $data = $this->guard(fn () => $this->client->gitData()->trees()->show($owner, $repo, $sha, true), $owner, $repo);
+        $path = sprintf('/repos/%s/%s/tarball/%s', rawurlencode($owner), rawurlencode($repo), rawurlencode($ref));
 
-        return [
-            'sha' => (string) ($data['sha'] ?? $sha),
-            'truncated' => (bool) ($data['truncated'] ?? false),
-            'tree' => $data['tree'] ?? [],
-        ];
-    }
+        if ($this->token !== null) {
+            // A plain Guzzle request with `stream => true`: the Knp client's plugin stack buffers the whole body
+            // before handing it over, so the byte cap could not stop a huge archive early. GitHub answers with a
+            // redirect to codeload.github.com; Guzzle follows it and drops the Authorization header on the host change.
+            try {
+                $response = (new GuzzleClient(['base_uri' => 'https://api.github.com', 'timeout' => 300, 'connect_timeout' => 15]))->get($path, [
+                    'stream' => true,
+                    'allow_redirects' => ['max' => 5, 'protocols' => ['https']],
+                    'headers' => [
+                        'Authorization' => 'Bearer '.$this->token,
+                        'Accept' => 'application/vnd.github+json',
+                        'User-Agent' => 'sentinel-slop',
+                        'X-GitHub-Api-Version' => '2022-11-28',
+                    ],
+                ]);
+            } catch (ClientException $e) {
+                // Never chain the Guzzle exception: its request carries the token in a header.
+                $status = $e->getResponse()->getStatusCode();
+                $rateLimited = in_array($status, [403, 429], true) && ($e->getResponse()->getHeaderLine('x-ratelimit-remaining') === '0' || stripos((string) $e->getResponse()->getBody(), 'rate limit') !== false);
 
-    public function getBlob(string $owner, string $repo, string $sha): string
-    {
-        // Ask for the raw body so large blobs are not base64-wrapped in JSON.
-        $response = $this->guard(fn () => $this->client->getHttpClient()->get(
-            sprintf('/repos/%s/%s/git/blobs/%s', rawurlencode($owner), rawurlencode($repo), rawurlencode($sha)),
-            ['Accept' => 'application/vnd.github.raw+json'],
-        ), $owner, $repo);
+                throw new RepositoryUnavailableException($rateLimited
+                    ? "GitHub's API rate limit for this installation was reached while fetching {$owner}/{$repo}. Try again in an hour."
+                    : "GitHub could not serve {$owner}/{$repo} (HTTP {$status}). Check that the app is still installed on this repository.", $status);
+            } catch (GuzzleException) {
+                throw new RepositoryUnavailableException("GitHub could not serve the archive of {$owner}/{$repo}. Please try again later.");
+            }
+        } else {
+            $response = $this->guard(fn () => $this->client->getHttpClient()->get($path), $owner, $repo);
+        }
 
-        return (string) $response->getBody();
+        $body = $response->getBody();
+        if ($body->isSeekable()) {
+            $body->rewind();
+        }
+        $out = fopen($destination, 'wb');
+        if ($out === false) {
+            throw new RepositoryUnavailableException("Could not write the archive for {$owner}/{$repo}.");
+        }
+
+        $total = 0;
+        try {
+            while (! $body->eof()) {
+                $chunk = $body->read(1024 * 1024);
+                if ($chunk === '') {
+                    break;
+                }
+                $total += strlen($chunk);
+                if ($total > $maxBytes) {
+                    throw new FetchLimitExceededException(sprintf('The repository archive exceeds the %d MB limit before extraction.', intdiv($maxBytes, 1024 * 1024)));
+                }
+                fwrite($out, $chunk);
+            }
+        } catch (FetchLimitExceededException $e) {
+            fclose($out);
+            @unlink($destination);
+            throw $e;
+        }
+        fclose($out);
     }
 
     public function getLanguages(string $owner, string $repo): array

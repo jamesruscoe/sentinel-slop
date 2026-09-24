@@ -6,8 +6,8 @@ use App\Enums\ScanStatus;
 use App\Models\Scan;
 use App\Scanning\Data\FetchLimits;
 use App\Scanning\Data\RepositoryRef;
-use App\Scanning\Fetch\GitHubTreeFetcher;
 use App\Scanning\Fetch\ScanWorkspace;
+use App\Scanning\Fetch\TarballFetcher;
 use App\Services\Scanning\ContentSourceResolver;
 use App\Services\Scanning\ScanWorkspaceFactory;
 
@@ -32,11 +32,11 @@ class FetchRepository extends ScanStageJob
 
         $ref = RepositoryRef::fromFullName($repository->full_name, $repository->default_branch);
 
-        $result = (new GitHubTreeFetcher($source))->fetch(
+        $result = (new TarballFetcher($source))->fetch(
             $ref,
             $workspace,
             FetchLimits::fromConfig(config('sentinel')),
-            fn (int $done, int $total) => $this->progress($scan, "Downloaded {$done} of {$total} files"),
+            fn (int $extracted) => $this->progress($scan, "Extracted {$extracted} files"),
         );
 
         $languages = $source->getLanguages($ref->owner, $ref->name);

@@ -3,21 +3,18 @@
 namespace Tests\Support;
 
 use App\Scanning\Contracts\GitHubContentSource;
+use App\Scanning\Fetch\TarWriter;
 use App\Scanning\Support\FileWalker;
-use RuntimeException;
 
 /**
- * An in-memory GitHub tree built from a fixture directory. Tests can add
- * synthetic entries (symlinks, submodules, unsafe paths) that could never be
- * checked into the fixture itself.
+ * An in-memory repository served as a gzipped tarball, exactly what GitHub's
+ * tarball endpoint returns. Tests can add entries a fixture directory could
+ * never hold: symlinks, hard links, unsafe paths, paths over 100 bytes.
  */
 final class FakeContentSource implements GitHubContentSource
 {
-    /** @var list<array{path: string, mode: string, type: string, sha: string, size?: int}> */
+    /** @var list<array{path: string, kind: string, content: string, target: string}> */
     public array $entries = [];
-
-    /** @var array<string, string> sha => content */
-    public array $blobs = [];
 
     /** @var array<string, int> */
     public array $languages = ['PHP' => 1000];
@@ -26,9 +23,12 @@ final class FakeContentSource implements GitHubContentSource
 
     public string $headSha = 'abc123def4567890abc123def4567890abc123de';
 
-    public bool $truncated = false;
+    /** The commit `git archive` records in the pax global header; null leaves it out. */
+    public ?string $archiveComment = null;
 
-    public int $blobRequests = 0;
+    public int $archiveRequests = 0;
+
+    public ?\Throwable $failWith = null;
 
     /** @var list<string> */
     public array $log = [];
@@ -44,35 +44,52 @@ final class FakeContentSource implements GitHubContentSource
         return $source;
     }
 
-    public function addFile(string $path, string $content, string $mode = '100644', ?int $declaredSize = null): self
+    /**
+     * @param  int|null  $size  pad the content to this many bytes (a big image, an oversized file)
+     */
+    public function addFile(string $path, string $content, ?int $size = null): self
     {
-        $sha = sha1($path.'|'.$content);
-        $this->entries[] = ['path' => $path, 'mode' => $mode, 'type' => 'blob', 'sha' => $sha, 'size' => $declaredSize ?? strlen($content)];
-        $this->blobs[$sha] = $content;
+        if ($size !== null && strlen($content) < $size) {
+            $content = str_pad($content, $size, 'x');
+        }
+        $this->entries[] = ['path' => $path, 'kind' => 'file', 'content' => $content, 'target' => ''];
 
         return $this;
     }
 
     public function addSymlink(string $path, string $target): self
     {
-        $this->entries[] = ['path' => $path, 'mode' => '120000', 'type' => 'blob', 'sha' => sha1('link|'.$path), 'size' => strlen($target)];
-        $this->blobs[sha1('link|'.$path)] = $target;
+        $this->entries[] = ['path' => $path, 'kind' => 'symlink', 'content' => '', 'target' => $target];
 
         return $this;
     }
 
-    public function addSubmodule(string $path): self
+    public function addHardLink(string $path, string $target): self
     {
-        $this->entries[] = ['path' => $path, 'mode' => '160000', 'type' => 'commit', 'sha' => sha1('sub|'.$path)];
+        $this->entries[] = ['path' => $path, 'kind' => 'hardlink', 'content' => '', 'target' => $target];
 
         return $this;
+    }
+
+    /** `git archive` writes a submodule as an empty directory. */
+    public function addSubmodule(string $path): self
+    {
+        return $this->addTree($path);
     }
 
     public function addTree(string $path): self
     {
-        $this->entries[] = ['path' => $path, 'mode' => '040000', 'type' => 'tree', 'sha' => sha1('tree|'.$path)];
+        $this->entries[] = ['path' => $path, 'kind' => 'tree', 'content' => '', 'target' => ''];
 
         return $this;
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function paths(): array
+    {
+        return array_column($this->entries, 'path');
     }
 
     public function getRepository(string $owner, string $repo): array
@@ -89,18 +106,31 @@ final class FakeContentSource implements GitHubContentSource
         return $this->headSha;
     }
 
-    public function getTree(string $owner, string $repo, string $sha): array
+    public function downloadArchive(string $owner, string $repo, string $ref, string $destination, int $maxBytes): void
     {
-        $this->log[] = "tree {$sha}";
+        $this->archiveRequests++;
+        $this->log[] = "archive {$ref}";
 
-        return ['sha' => $sha, 'truncated' => $this->truncated, 'tree' => $this->entries];
-    }
+        if ($this->failWith !== null) {
+            throw $this->failWith;
+        }
 
-    public function getBlob(string $owner, string $repo, string $sha): string
-    {
-        $this->blobRequests++;
+        $writer = TarWriter::createGzip($destination);
+        if ($this->archiveComment !== null) {
+            $writer->globalHeader(['comment' => $this->archiveComment]);
+        }
+        $root = "{$owner}-{$repo}-".substr($ref, 0, 7).'/';
 
-        return $this->blobs[$sha] ?? throw new RuntimeException("Unknown blob {$sha}");
+        foreach ($this->entries as $entry) {
+            match ($entry['kind']) {
+                'file' => $writer->file($root.$entry['path'], $entry['content']),
+                'symlink' => $writer->symlink($root.$entry['path'], $entry['target']),
+                'hardlink' => $writer->hardLink($root.$entry['path'], $root.$entry['target']),
+                'tree' => $writer->directory($root.$entry['path']),
+            };
+        }
+
+        $writer->close();
     }
 
     public function getLanguages(string $owner, string $repo): array

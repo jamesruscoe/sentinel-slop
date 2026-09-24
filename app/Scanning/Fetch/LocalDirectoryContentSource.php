@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Scanning\Fetch;
 
 use App\Scanning\Contracts\GitHubContentSource;
+use App\Scanning\Exceptions\FetchLimitExceededException;
 use App\Scanning\Support\FileWalker;
 use RuntimeException;
 
@@ -17,9 +18,6 @@ final class LocalDirectoryContentSource implements GitHubContentSource
 {
     /** @var array<string, int> */
     public array $languages = [];
-
-    /** @var array<string, string>|null blob sha => absolute path, built on the first blob request */
-    private ?array $blobs = null;
 
     public function __construct(private readonly string $directory)
     {
@@ -38,36 +36,30 @@ final class LocalDirectoryContentSource implements GitHubContentSource
         return sha1('local|'.$this->directory.'|'.$branch);
     }
 
-    public function getTree(string $owner, string $repo, string $sha): array
+    /**
+     * Packs the directory the way `git archive` would (one root folder, symlinks as
+     * symlink entries) so the fetcher is exercised exactly as in production.
+     */
+    public function downloadArchive(string $owner, string $repo, string $ref, string $destination, int $maxBytes): void
     {
-        $tree = [];
+        $writer = TarWriter::createGzip($destination);
+        $writer->globalHeader(['comment' => $ref]);
+        $root = $repo.'-'.substr($ref, 0, 7).'/';
 
         foreach (FileWalker::walk($this->directory) as $entry) {
-            $tree[] = $entry['is_link']
-                ? ['path' => $entry['path'], 'mode' => '120000', 'type' => 'blob', 'sha' => sha1('link|'.$entry['path']), 'size' => 0]
-                : ['path' => $entry['path'], 'mode' => '100644', 'type' => 'blob', 'sha' => sha1('file|'.$entry['path']), 'size' => $entry['size']];
-        }
-
-        return ['sha' => $sha, 'truncated' => false, 'tree' => $tree];
-    }
-
-    public function getBlob(string $owner, string $repo, string $sha): string
-    {
-        // Index the tree once: walking the directory per blob made fetching quadratic (3,400 files took ten minutes).
-        if ($this->blobs === null) {
-            $this->blobs = [];
-            foreach (FileWalker::walk($this->directory) as $entry) {
-                if (! $entry['is_link']) {
-                    $this->blobs[sha1('file|'.$entry['path'])] = $entry['absolute'];
-                }
+            if ($entry['is_link']) {
+                $writer->symlink($root.$entry['path'], (string) (readlink($entry['absolute']) ?: 'target'));
+            } else {
+                $writer->file($root.$entry['path'], (string) file_get_contents($entry['absolute']));
             }
         }
 
-        if (! isset($this->blobs[$sha])) {
-            throw new RuntimeException("Unknown blob {$sha}");
-        }
+        $writer->close();
 
-        return (string) file_get_contents($this->blobs[$sha]);
+        if (filesize($destination) > $maxBytes) {
+            @unlink($destination);
+            throw new FetchLimitExceededException(sprintf('The repository archive exceeds the %d MB limit before extraction.', intdiv($maxBytes, 1024 * 1024)));
+        }
     }
 
     public function getLanguages(string $owner, string $repo): array

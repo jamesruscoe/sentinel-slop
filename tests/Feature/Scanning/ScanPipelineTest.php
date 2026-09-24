@@ -88,7 +88,7 @@ test('a scan runs through the pipeline, stores results and deletes its files', f
 
 test('a limit failure marks the scan failed with the user-facing reason and cleans up', function () {
     Event::fake([ScanProgressed::class, ScanCompleted::class, ScanFailed::class]);
-    $this->source->truncated = true;
+    config()->set('sentinel.limits.max_file_count', 2);
 
     try {
         app(ScanDispatcher::class)->dispatch($this->repository);
@@ -98,7 +98,7 @@ test('a limit failure marks the scan failed with the user-facing reason and clea
 
     $scan = Scan::query()->firstOrFail();
     expect($scan->status)->toBe(ScanStatus::Failed)
-        ->and($scan->error_message)->toContain('too many files for GitHub')
+        ->and($scan->error_message)->toContain('more than 2 files')
         ->and($scan->finished_at)->not->toBeNull()
         ->and(is_dir($this->storage.'/'.$scan->uuid))->toBeFalse();
     Event::assertDispatched(ScanFailed::class);
@@ -106,7 +106,7 @@ test('a limit failure marks the scan failed with the user-facing reason and clea
 
 test('an unexpected exception is reported with a generic message', function () {
     Event::fake([ScanProgressed::class, ScanCompleted::class, ScanFailed::class]);
-    $this->source->entries = [['path' => 'a.php', 'mode' => '100644', 'type' => 'blob', 'sha' => 'missing', 'size' => 1]];
+    $this->source->failWith = new RuntimeException('codeload hung up');
 
     try {
         app(ScanDispatcher::class)->dispatch($this->repository);
