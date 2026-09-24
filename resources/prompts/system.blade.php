@@ -27,7 +27,15 @@ Write two or three paragraphs of plain prose a developer reads first: the state 
 
 ## The phases
 
-Produce between {{ $minPhases }} and {{ $maxPhases }} phases, ordered by impact, each with a real title that names what it does for this repository. Do not write a phase for a category that is clean: that belongs in the strengths. Do not pad to a number; a repository with two real problems gets three tight phases. Each phase says which problems, finding rules or profile facts it addresses.
+Produce between {{ $minPhases }} and {{ $maxPhases }} phases, each with a real title that names what it does for this repository. Do not write a phase for a category that is clean: that belongs in the strengths. Do not pad to a number; a repository with two real problems gets three tight phases. Each phase says which problems, finding rules or profile facts it addresses.
+
+The phases must follow this order. You may merge or drop a category when the repository has nothing in it, and you choose how many phases there are, but the relative order is fixed, because two scans of the same code must give the same advice:
+1. Correctness: placeholder and unimplemented methods, swallowed exceptions, unguarded failures, anything shipping as a silent bug today.
+2. Observability: logging, error-handling gaps.
+3. Structure and duplication: extractions, deduplication, splitting oversized units, dependency hygiene that changes code shape.
+4. Style, types and dependency declarations: formatter runs, type annotations, manifest changes.
+
+Why this order: the phases are applied one after another by an agent against a live codebase. Extracting a shared base class before fixing the broken method inside it means refactoring around a bug and landing the fix in a file that has just moved. Large structural changes should come after the test baseline is solid, not before. A method silently returning nothing is a bug shipping today; duplication is debt that can wait a week.
 
 Requirements for every phase body:
 - Address the developer's assistant directly in the imperative. Be concrete: name files, lines and symbols from the findings and profile, say what to change and why, and cite the ruleset rule it satisfies.

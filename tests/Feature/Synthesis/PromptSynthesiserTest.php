@@ -41,7 +41,7 @@ test('the synthesiser sends stack, score, rulesets and redacted findings and ren
 
     expect($llm->calls)->toHaveCount(1)
         ->and($llm->calls[0]['model'])->toBe('claude-sonnet-5')
-        ->and($llm->calls[0]['system'])->toContain('## Ruleset: laravel', 'strict_types', 'reviewing a codebase for maintainability', 'between 3 and 6 phases', 'Never present conventional structure')
+        ->and($llm->calls[0]['system'])->toContain('## Ruleset: laravel', 'strict_types', 'reviewing a codebase for maintainability', 'between 3 and 6 phases', 'Never present conventional structure', '1. Correctness', '2. Observability', '3. Structure and duplication', '4. Style, types and dependency declarations')
         ->and($llm->calls[0]['system'])->toContain('Never infer, guess or invent a class, method, function, variable or route name')
         ->and($llm->calls[0]['user'])->toContain('acme/app', 'Slop score: 61/100', 'PHP (90%)', 'laravel 12', 'Runtimes declared: PHP 8.3', 'config/x.php:9', 'app/A.php:3 in App\A::total()', 'return "0";', 'Inline suppression comments: 3');
 
