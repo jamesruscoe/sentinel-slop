@@ -238,10 +238,10 @@ final class Naming
         $segments = explode('/', $path);
         $base = array_pop($segments);
 
-        foreach ($segments as $segment) {
-            if (in_array($segment, self::CONFIG_DIRECTORIES, true)) {
-                return true;
-            }
+        // Only a top-level config directory counts: app/Http/Controllers/Settings/ProfileController.php is a
+        // controller in a "Settings" namespace, not configuration.
+        if ($segments !== [] && in_array($segments[0], self::CONFIG_DIRECTORIES, true)) {
+            return true;
         }
 
         return preg_match('/(^|[._-])(config|settings|env|environment|constants)([._-]|$)|\.config\.[a-z]+$|^(vite|webpack|rollup|jest|vitest|tailwind|postcss|eslint|prettier|babel|next|nuxt|astro|svelte|playwright|cypress|phpunit|pest|artisan|gulpfile|gruntfile|karma|tsup|esbuild)\b|^conf\.py$|^wsgi\.py$|^asgi\.py$|^manage\.py$|^server\.php$|^index\.php$/', $base) === 1;

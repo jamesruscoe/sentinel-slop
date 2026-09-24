@@ -105,7 +105,9 @@ test('naming conventions resolve areas, kinds and feature stems', function () {
         ->and(Naming::isTestName('app/Services/DogService.php'))->toBeFalse()
         ->and(Naming::isConfigPath('config/services.php'))->toBeTrue()
         ->and(Naming::isConfigPath('vite.config.ts'))->toBeTrue()
-        ->and(Naming::isConfigPath('app/Services/DogService.php'))->toBeFalse();
+        ->and(Naming::isConfigPath('app/Services/DogService.php'))->toBeFalse()
+        ->and(Naming::isConfigPath('app/Http/Controllers/Settings/ProfileController.php'))->toBeFalse()
+        ->and(Naming::isConfigPath('config/services.php'))->toBeTrue();
 });
 
 test('logging is recognised through an aliased facade and through an injected wrapper that is not named like a logger', function () {

@@ -96,6 +96,15 @@ final class ProfileFormatter
         $lines[] = '  Grab-bag helper files: '.(implode(', ', array_map(fn ($x) => $x['path'].' ('.$x['code_lines'].')', (array) ($coh['grab_bag_files'] ?? []))) ?: 'none');
         $lines[] = '';
 
+        $st = $d['style'] ?? [];
+        if ($st !== []) {
+            $lines[] = sprintf('STYLE: %d of %d PHP files differ from the %s preset the style check uses (%d%%). The repository\'s own pint.json: %s. %s',
+                $st['files_flagged'] ?? 0, $st['php_files'] ?? 0, $st['checked_preset'] ?? 'laravel', (int) round((float) ($st['ratio'] ?? 0) * 100),
+                ($st['declared_preset'] ?? null) !== null ? 'declares the '.$st['declared_preset'].' preset'.(($st['declared_rules'] ?? 0) > 0 ? ' with '.$st['declared_rules'].' rule overrides' : '') : (($st['declared_rules'] ?? 0) > 0 ? 'overrides '.$st['declared_rules'].' rules with no preset' : 'absent'),
+                ($st['prevailing_style_differs'] ?? false) ? 'The prevailing style is not the checked preset: agree a preset before any formatter run.' : '');
+            $lines[] = '';
+        }
+
         $r = $d['reachability'] ?? [];
         $unref = (array) ($r['unreferenced'] ?? []);
         $lines[] = sprintf('REACHABILITY (import graph plus string mentions and globs; framework entry points and auto-discovered kinds excluded): %d of %d files are referenced by nothing (%s lines).', count($unref), $r['supported_files'] ?? 0, number_format((int) ($r['unreferenced_lines'] ?? 0)));
