@@ -147,17 +147,18 @@ ENTRYPOINT ["docker/entrypoint.sh"]
 CMD []
 
 # ---------------------------------------------------------------------------
-# Stage 4 (optional, `--target test`): the same image with dev dependencies, running the analyser and
-# canary tests against the binaries that actually ship. CI builds this target before the runtime one is pushed.
+# Stage 4 (`--target test`): the same image with dev dependencies, running the whole suite, Pint and PHPStan
+# against the binaries that actually ship. The deploy pipeline builds this target first and pushes the runtime
+# image only when it succeeds, so nothing reaches ECR that failed a test. `git init` exists for the test that
+# asserts a workspace under storage/app/scans is git-ignored (the .git directory is not copied into the image).
 # ---------------------------------------------------------------------------
 FROM runtime AS test
 COPY --from=composer:2.10.3 /usr/bin/composer /usr/bin/composer
 RUN composer install --no-interaction --no-progress --prefer-dist --optimize-autoloader \
-    && cp .env.example .env && php artisan key:generate --force
+    && cp .env.example .env && php artisan key:generate --force \
+    && php artisan route:clear && php artisan view:clear && php artisan config:clear \
+    && git init -q && git config --global --add safe.directory /var/www/html
 ENV APP_ENV=testing
-RUN php vendor/bin/pest \
-    tests/Feature/Scanning/MaliciousConfigsTest.php \
-    tests/Feature/Scanning/PhpAnalysersTest.php \
-    tests/Feature/Scanning/JsAnalysersTest.php \
-    tests/Feature/Scanning/PythonAnalysersTest.php \
-    tests/Feature/DoctorCommandTest.php
+RUN php vendor/bin/pint --test \
+    && php vendor/bin/phpstan analyse --no-progress --memory-limit=1G \
+    && php vendor/bin/pest --compact

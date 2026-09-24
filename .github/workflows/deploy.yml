@@ -1,0 +1,147 @@
+# Build, test, push, deploy.
+#
+# test    builds the Dockerfile's `test` target: the production image plus dev dependencies, running Pint,
+#         PHPStan and the whole Pest suite against the analyser binaries that ship. Runs on every push and
+#         pull request and needs no AWS access.
+# push    (main only, after test) builds the `runtime` target from the same cache and pushes it to ECR
+#         tagged with the commit SHA. Nothing reaches ECR that failed a test: the job depends on it.
+# deploy  (main only, after push) registers a task-definition revision per service pointing at the new
+#         image, runs the migrations as a one-off task from the web revision and waits for it to exit 0,
+#         then updates the three services and waits for them to stabilise.
+#
+# Repository variables (Settings → Secrets and variables → Actions → Variables), from `terraform output`:
+#   AWS_DEPLOY_ROLE_ARN        deploy_role_arn
+#   ECS_SUBNET_IDS             public_subnet_ids, comma-separated
+#   ECS_TASKS_SECURITY_GROUP   tasks_security_group_id
+# Everything else is a name the Terraform fixes.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-west-2
+  ECR_REPOSITORY: sentinel-slop
+  ECS_CLUSTER: sentinel-slop-prod
+  TASK_FAMILY_PREFIX: sentinel-slop-prod
+
+jobs:
+  test:
+    name: Test inside the image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the test target (Pint, PHPStan, Pest against the shipped binaries)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: test
+          push: false
+          load: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  push:
+    name: Push the runtime image
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - id: meta
+        run: echo "image=${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build the runtime target and push it tagged with the commit
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: runtime
+          push: true
+          tags: ${{ steps.meta.outputs.image }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Migrate and roll the services
+    needs: push
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ${{ needs.push.outputs.image }}
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Register a task-definition revision per service with the new image
+        id: register
+        run: |
+          set -euo pipefail
+          for service in web worker scheduler; do
+            family="${TASK_FAMILY_PREFIX}-${service}"
+            aws ecs describe-task-definition --task-definition "$family" --query taskDefinition \
+              | jq --arg image "$IMAGE" '
+                  .containerDefinitions[0].image = $image
+                  | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities,
+                        .registeredAt, .registeredBy, .deregisteredAt)' > "/tmp/${service}.json"
+            arn=$(aws ecs register-task-definition --cli-input-json "file:///tmp/${service}.json" --query taskDefinition.taskDefinitionArn --output text)
+            echo "${service}=${arn}" >> "$GITHUB_OUTPUT"
+            echo "registered ${arn}"
+          done
+
+      - name: Run the migrations as a one-off task from the new web revision
+        run: |
+          set -euo pipefail
+          task=$(aws ecs run-task \
+            --cluster "$ECS_CLUSTER" \
+            --launch-type FARGATE \
+            --task-definition "${{ steps.register.outputs.web }}" \
+            --network-configuration "awsvpcConfiguration={subnets=[${{ vars.ECS_SUBNET_IDS }}],securityGroups=[${{ vars.ECS_TASKS_SECURITY_GROUP }}],assignPublicIp=ENABLED}" \
+            --overrides '{"containerOverrides":[{"name":"web","command":["php","artisan","migrate","--force","--no-interaction"],"environment":[{"name":"CONTAINER_ROLE","value":"migrate"}]}]}' \
+            --query 'tasks[0].taskArn' --output text)
+          echo "migration task ${task}"
+          aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$task"
+          exit_code=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$task" --query 'tasks[0].containers[0].exitCode' --output text)
+          reason=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$task" --query 'tasks[0].stoppedReason' --output text)
+          echo "migration exit ${exit_code} (${reason})"
+          task_id="${task##*/}"
+          aws logs get-log-events --log-group-name "/ecs/${ECS_CLUSTER}/web" --log-stream-name "web/web/${task_id}" --query 'events[].message' --output text || true
+          test "$exit_code" = "0"
+
+      - name: Update the services and wait for them to stabilise
+        run: |
+          set -euo pipefail
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "${TASK_FAMILY_PREFIX}-web"       --task-definition "${{ steps.register.outputs.web }}"       --query 'service.serviceName' --output text
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "${TASK_FAMILY_PREFIX}-worker"    --task-definition "${{ steps.register.outputs.worker }}"    --query 'service.serviceName' --output text
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "${TASK_FAMILY_PREFIX}-scheduler" --task-definition "${{ steps.register.outputs.scheduler }}" --query 'service.serviceName' --output text
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "${TASK_FAMILY_PREFIX}-web" "${TASK_FAMILY_PREFIX}-worker" "${TASK_FAMILY_PREFIX}-scheduler"
+          echo "deployed ${IMAGE}"
