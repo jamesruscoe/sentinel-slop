@@ -75,11 +75,12 @@ module "cluster" {
   services = local.services
 }
 
-# Which secrets each service may read. The worker mints installation tokens and calls the LLM; the web tier
-# handles login and webhooks; the scheduler only needs the database. Nothing else is granted.
+# Which secrets each service may read. The web tier handles login and webhooks and, on /github/setup, claims an
+# installation and syncs its repositories, which mints an installation token (the private key); the worker mints
+# tokens for scans and calls the LLM; the scheduler only needs the database. Nothing else is granted.
 locals {
   service_secrets = {
-    web       = ["APP_KEY", "DB_PASSWORD", "GITHUB_APP_CLIENT_SECRET", "GITHUB_APP_WEBHOOK_SECRET"]
+    web       = ["APP_KEY", "DB_PASSWORD", "GITHUB_APP_CLIENT_SECRET", "GITHUB_APP_WEBHOOK_SECRET", "GITHUB_APP_PRIVATE_KEY"]
     worker    = ["APP_KEY", "DB_PASSWORD", "GITHUB_APP_PRIVATE_KEY", "ANTHROPIC_API_KEY"]
     scheduler = ["APP_KEY", "DB_PASSWORD"]
   }

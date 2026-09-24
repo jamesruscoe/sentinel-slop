@@ -116,7 +116,7 @@ Non-secret configuration is plain environment in the task definition. Secrets ar
 | `REDIS_PASSWORD` | yes | yes | yes |
 | `GITHUB_APP_CLIENT_SECRET` (login) | yes | no | no |
 | `GITHUB_APP_WEBHOOK_SECRET` | yes | no | no |
-| `GITHUB_APP_PRIVATE_KEY` (PEM contents; mints installation tokens) | no | yes | no |
+| `GITHUB_APP_PRIVATE_KEY` (PEM contents; mints installation tokens: the worker for scans, the web tier to claim an installation and sync its repositories on `/github/setup`) | yes | yes | no |
 | `ANTHROPIC_API_KEY` | no | yes | no |
 | `REVERB_APP_SECRET` | yes (client auth) | yes (publishes events) | yes |
 

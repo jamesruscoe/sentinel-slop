@@ -21,6 +21,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Manual re-deploy of the current commit, e.g. after a Terraform apply changed a task definition.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -59,7 +61,7 @@ jobs:
   push:
     name: Push the runtime image
     needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
       image: ${{ steps.meta.outputs.image }}
