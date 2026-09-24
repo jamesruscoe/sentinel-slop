@@ -136,8 +136,10 @@ RUN mkdir -p storage/logs storage/framework/cache storage/framework/sessions sto
     && chown www-data:www-data /var/www \
     && chmod +x docker/entrypoint.sh
 
-# Views and routes can be cached without environment; config is cached at container start (it holds secrets).
-RUN php artisan view:cache && php artisan route:cache
+# Views can be cached without environment. Routes cannot: Livewire prefixes its endpoints with a hash of
+# APP_KEY, so a route cache built here (no key) sends every page to a /livewire-<hash>/livewire.min.js that
+# 404s at runtime. Config and routes are cached by the entrypoint, once the real environment is present.
+RUN php artisan view:cache
 
 # The build fails here if anything above drifted from its pin or the PHP is not fit for the worker.
 RUN php artisan sentinel:doctor --strict

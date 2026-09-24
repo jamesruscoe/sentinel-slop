@@ -13,8 +13,10 @@ SCANS="${SENTINEL_SCAN_STORAGE_PATH:-/tmp/sentinel/scans}"
 mkdir -p "$SCANS" storage/logs storage/framework/cache storage/framework/sessions storage/framework/views bootstrap/cache
 chown -R www-data:www-data "$SCANS" storage bootstrap/cache
 
-# Configuration is cached per container start: it holds the injected secrets, so it is never baked into the image.
+# Configuration and routes are cached per container start: the config holds the injected secrets, and Livewire's
+# route prefix is a hash of APP_KEY, so neither can be baked into the image.
 gosu www-data php artisan config:cache --no-ansi >/dev/null
+gosu www-data php artisan route:cache --no-ansi >/dev/null
 
 case "${CONTAINER_ROLE:-web}" in
     web)
