@@ -3,6 +3,7 @@
 use App\Scanning\Data\Finding;
 use App\Scanning\Data\FindingCollection;
 use App\Scanning\Data\Stack;
+use App\Scanning\Detect\DependencyIndex;
 use App\Scanning\Enums\FindingCategory;
 use App\Scanning\Enums\Severity;
 use App\Scanning\Profile\AbsenceChecks;
@@ -259,6 +260,67 @@ test('a package wired by package discovery, a driver name or a config token is n
     expect($dependencies['never_referenced'])->toBe(['composer:acme/forgotten'])
         ->and(implode("\n", $dependencies['wired_without_import']))->toContain('league/flysystem-aws-s3-v3', 'pbmedia/laravel-ffmpeg', 'acme/discovered', 'laravel/helpers')
         ->and(implode("\n", $dependencies['wired_without_import']))->toContain("'ffmpeg' appears in config or .env.example", 'package discovery');
+});
+
+test('a Django app is reachable through INSTALLED_APPS, urls and "from package import module"; only a stray package is dead', function () {
+    $workspace = temporaryWorkspace();
+    $repo = $workspace->repoPath();
+    foreach (['proj', 'app/accounts/templatetags', 'app/accounts/management/commands', 'app/orphan'] as $dir) {
+        @mkdir($repo.'/'.$dir, 0777, true);
+    }
+    file_put_contents($repo.'/requirements.txt', "django==5.0\n");
+    file_put_contents($repo.'/manage.py', "import os\nimport sys\n\nif __name__ == '__main__':\n    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'proj.settings')\n");
+    file_put_contents($repo.'/proj/__init__.py', '');
+    file_put_contents($repo.'/proj/settings.py', "INSTALLED_APPS = ['django.contrib.admin', 'app.accounts']\nROOT_URLCONF = 'proj.urls'\n");
+    file_put_contents($repo.'/proj/urls.py', "from django.urls import include, path\n\nurlpatterns = [path('', include('app.accounts.urls'))]\n");
+    file_put_contents($repo.'/app/__init__.py', '');
+    file_put_contents($repo.'/app/accounts/__init__.py', '');
+    file_put_contents($repo.'/app/accounts/urls.py', "from django.urls import path\n\nfrom app.accounts import views\n\nurlpatterns = [path('login/', views.login)]\n");
+    file_put_contents($repo.'/app/accounts/views.py', "from app.accounts.forms import LoginForm\n\n\ndef login(request):\n    form = LoginForm(request.POST)\n    return form\n");
+    file_put_contents($repo.'/app/accounts/forms.py', "class LoginForm:\n    pass\n");
+    file_put_contents($repo.'/app/accounts/tasks.py', "def nightly():\n    return 1\n");
+    file_put_contents($repo.'/app/accounts/templatetags/__init__.py', '');
+    file_put_contents($repo.'/app/accounts/templatetags/accounts_tags.py', "def initials(name):\n    return name[:1]\n");
+    file_put_contents($repo.'/app/accounts/management/commands/pruneusers.py', "class Command:\n    def handle(self):\n        return 0\n");
+    file_put_contents($repo.'/app/orphan/__init__.py', '');
+    file_put_contents($repo.'/app/orphan/util.py', "def unused():\n    return None\n");
+
+    [$profile] = profileDirectory($repo, ['django']);
+    $areas = array_column($profile->section('areas'), 'area');
+    $kinds = [];
+    foreach ($profile->section('areas') as $area) {
+        if ($area['area'] === 'app/accounts') {
+            $kinds = $area['kinds'];
+        }
+    }
+
+    expect(array_column($profile->section('reachability')['unreferenced'], 'path'))->toBe(['app/orphan/util.py'])
+        ->and($areas)->toContain('app/accounts', 'app/orphan', 'proj')
+        ->and($kinds)->toHaveKeys(['controller', 'route', 'form', 'job'])
+        ->and($profile->section('tests')['frameworks'])->toContain('django test runner')
+        ->and(Naming::stemOf('app/accounts/views.py'))->toBe('account');
+});
+
+test('a TypeScript workspace resolves its own tsconfig alias, .js imports to .ts sources and package.json entry points', function () {
+    $workspace = temporaryWorkspace();
+    $repo = $workspace->repoPath();
+    foreach (['cli/src/helpers', 'cli/template/base'] as $dir) {
+        @mkdir($repo.'/'.$dir, 0777, true);
+    }
+    file_put_contents($repo.'/package.json', '{"name":"root","private":true,"workspaces":["cli"]}');
+    file_put_contents($repo.'/cli/package.json', '{"name":"create-thing","bin":{"create-thing":"./dist/index.js"},"exports":"./dist/index.js","dependencies":{"execa":"^8.0.0"}}');
+    file_put_contents($repo.'/cli/tsconfig.json', '{"compilerOptions":{"baseUrl":"./","paths":{"~/*":["./src/*"]}}}');
+    file_put_contents($repo.'/cli/src/index.ts', "import { initGit } from '~/helpers/git.js'\n\ninitGit()\n");
+    file_put_contents($repo.'/cli/src/helpers/git.ts', "import { execa } from 'execa'\n\nexport const initGit = () => execa('git', ['init'])\n");
+    file_put_contents($repo.'/cli/src/helpers/unused.ts', "export const unused = () => 1\n");
+    file_put_contents($repo.'/cli/template/base/tsconfig.ts', "export const scaffold = true\n");
+
+    [$profile] = profileDirectory($repo);
+    $areas = array_column($profile->section('areas'), 'area');
+
+    expect(array_column($profile->section('reachability')['unreferenced'], 'path'))->toBe(['cli/src/helpers/unused.ts'])
+        ->and($areas)->toContain('cli/src/helpers', 'cli/template')
+        ->and(DependencyIndex::build($repo)->npmDeclares('execa'))->toBeTrue();
 });
 
 test('no absence finding fires below its minimum population', function () {
