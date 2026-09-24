@@ -20,6 +20,18 @@ variable "github_repository" {
   default     = "jamesruscoe/sentinel-slop"
 }
 
+variable "github_owner_id" {
+  description = "Numeric id of the repository owner; GitHub embeds it in the OIDC subject the deploy role trusts."
+  type        = string
+  default     = "131148285"
+}
+
+variable "github_repository_id" {
+  description = "Numeric id of the repository; embedded in the OIDC subject alongside the owner id."
+  type        = string
+  default     = "1382103864"
+}
+
 variable "image_tag" {
   description = "Image tag the task definitions start on. The deploy pipeline registers new revisions with the commit SHA; Terraform ignores those (lifecycle)."
   type        = string

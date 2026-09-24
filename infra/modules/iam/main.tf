@@ -95,11 +95,19 @@ data "aws_iam_policy_document" "deploy_assume" {
       values   = ["sts.amazonaws.com"]
     }
 
-    # Only the main branch of this repository may deploy.
+    # Only the main branch of this repository may deploy. GitHub's subject now carries the immutable owner and
+    # repository IDs ("repo:owner@123/name@456:ref:refs/heads/main"); the plain form is listed too so the policy
+    # is right whichever form a token carries. The IDs also mean a renamed or re-created repository of the same
+    # name cannot assume the role.
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repository}:ref:refs/heads/main"]
+      values = compact([
+        "repo:${var.github_repository}:ref:refs/heads/main",
+        var.github_owner_id != "" && var.github_repository_id != ""
+        ? "repo:${split("/", var.github_repository)[0]}@${var.github_owner_id}/${split("/", var.github_repository)[1]}@${var.github_repository_id}:ref:refs/heads/main"
+        : "",
+      ])
     }
   }
 }
@@ -206,6 +214,18 @@ variable "service_secret_arns" {
 
 variable "github_repository" {
   type = string
+}
+
+variable "github_owner_id" {
+  description = "Numeric GitHub user/org id (gh api users/<owner> --jq .id); part of the OIDC subject."
+  type        = string
+  default     = ""
+}
+
+variable "github_repository_id" {
+  description = "Numeric GitHub repository id (gh api repos/<owner>/<name> --jq .id); part of the OIDC subject."
+  type        = string
+  default     = ""
 }
 
 variable "create_oidc_provider" {

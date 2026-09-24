@@ -95,7 +95,9 @@ module "iam" {
   service_secret_arns = {
     for service, names in local.service_secrets : service => [for n in names : module.secrets.arns[n]]
   }
-  github_repository = var.github_repository
+  github_repository    = var.github_repository
+  github_owner_id      = var.github_owner_id
+  github_repository_id = var.github_repository_id
 }
 
 # Non-secret environment shared by every role. Secrets are injected by ECS from the ARNs above.
