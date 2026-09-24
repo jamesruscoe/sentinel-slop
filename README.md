@@ -157,10 +157,11 @@ infra/
     secrets/         one Secrets Manager secret per value under sentinel-slop/prod/; APP_KEY and DB_PASSWORD generated,
                      the GitHub App and Anthropic values are shells you fill before the first deploy
     rds/             MySQL 8.4 db.t4g.micro, 20 GB gp3 autoscaling to 100, encrypted, 7-day backups, deletion protection
-    redis/           ElastiCache Valkey cache.t4g.micro, one node, reachable from the tasks' security group only
+    redis/           ElastiCache Redis 7.1 cache.t4g.micro, one node, reachable from the tasks' security group only
+                     (Valkey is only offered through replication groups, which a single node does not need)
     ecs-cluster/     cluster (Fargate) and one CloudWatch log group per service, 30-day retention
-    iam/             one execution role per service scoped to its secret ARNs, an empty task role,
-                     the GitHub Actions OIDC deploy role (main branch of this repository only)
+    iam/             one execution role per service scoped to its secret ARNs, a task role that may only open the
+                     ECS Exec channel, the GitHub Actions OIDC deploy role (main branch of this repository only)
     ecs-service/     generic task definition + service, instantiated for web, worker and scheduler with role,
                      size, secrets and target group as inputs; task_definition ignored after creation (the pipeline registers revisions)
 ```
@@ -174,7 +175,23 @@ Bring it up in this order:
 5. Run the migrations once as a one-off task (the pipeline does this on every deploy): `aws ecs run-task` on the web task definition with `CONTAINER_ROLE=migrate` and command `php artisan migrate --force`.
 6. Point the production GitHub App at `https://<domain>` (see "Production GitHub App").
 
-Set `create_oidc_provider = false` on the iam module if the account already has the GitHub OIDC provider from the other application. The migration one-off task and the `TRUSTED_PROXIES` variable (the VPC CIDR) are the only things the application needs from the infrastructure beyond its environment.
+Set `create_oidc_provider = false` on the iam module if the account already has the GitHub OIDC provider from the other application. The deploy role trusts one exact OIDC subject, `repo:<owner>@<owner id>/<name>@<repository id>:ref:refs/heads/main`: GitHub embeds the numeric ids (`gh api repos/<owner>/<name> --jq '.id, .owner.id'`), IAM can evaluate only `sub` and `aud` from the token, and a plain `repo:<owner>/<name>:...` policy fails with "Not authorized to perform sts:AssumeRoleWithWebIdentity". The ids are the `github_owner_id` and `github_repository_id` variables.
+
+### Reaching the database and Redis
+
+Neither has a public endpoint. ECS Exec is enabled on every service, so a running task is the tunnel (the Session Manager plugin must be installed once: `winget install Amazon.SessionManagerPlugin`):
+
+```powershell
+$env:AWS_PROFILE = "personal"
+$task    = aws ecs list-tasks --cluster sentinel-slop-prod --service-name sentinel-slop-prod-web --query 'taskArns[0]' --output text
+$runtime = aws ecs describe-tasks --cluster sentinel-slop-prod --tasks $task --query 'tasks[0].containers[0].runtimeId' --output text
+$taskId  = $task.Split('/')[-1]
+aws ssm start-session --target "ecs:sentinel-slop-prod_${taskId}_${runtime}" `
+  --document-name AWS-StartPortForwardingSessionToRemoteHost `
+  --parameters "{\`"host\`":[\`"$(terraform -chdir=infra/envs/prod output -raw db_address)\`"],\`"portNumber\`":[\`"3306\`"],\`"localPortNumber\`":[\`"13306\`"]}"
+```
+
+While that session is open, a MySQL client connects to `127.0.0.1:13306` as `sentinel` with the password from `aws secretsmanager get-secret-value --secret-id sentinel-slop/prod/DB_PASSWORD --query SecretString --output text`. The same command with the Redis address and port 6379 reaches ElastiCache. A task started before ECS Exec was enabled has no agent ("TargetNotConnected"): `aws ecs update-service --cluster sentinel-slop-prod --service sentinel-slop-prod-web --force-new-deployment` replaces it. The migration one-off task and the `TRUSTED_PROXIES` variable (the VPC CIDR) are the only things the application needs from the infrastructure beyond its environment.
 
 ### Production GitHub App
 
