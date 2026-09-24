@@ -93,6 +93,11 @@ final class ImportGraph
                 $target = self::resolveMention($mention, $file['path'], $exists, $pageRoots);
                 if ($target !== null && $target !== $file['path']) {
                     $targets[$target] = true;
+                    // A package named by its dotted path (INSTALLED_APPS = ['hc.integrations.slack']) is loaded whole
+                    // by the framework: every module directly inside it counts as referenced.
+                    if (str_ends_with($target, '/__init__.py') && ! str_contains($mention, '/')) {
+                        $globbed[dirname($target).'/'] = true;
+                    }
                 }
             }
             if ($targets === [] && $file['family'] === null) {
@@ -111,7 +116,7 @@ final class ImportGraph
     /**
      * The directory a glob pattern covers, resolved like a relative or aliased import.
      *
-     * @param  array<string, string>  $aliases
+     * @param  list<array{scope: string, prefix: string, dir: string}>  $aliases
      */
     private static function globPrefix(string $glob, string $importer, array $aliases): ?string
     {
@@ -123,10 +128,9 @@ final class ImportGraph
         if (str_starts_with($base, './') || str_starts_with($base, '../')) {
             return rtrim(self::normalise(dirname($importer).'/'.$base), '/').'/';
         }
-        foreach ($aliases as $prefix => $dir) {
-            if (str_starts_with($base, $prefix)) {
-                return rtrim(self::normalise($dir.substr($base, strlen($prefix))), '/').'/';
-            }
+        $aliased = self::applyAlias($base, $importer, $aliases);
+        if ($aliased !== null) {
+            return rtrim($aliased, '/').'/';
         }
         if (str_starts_with($base, '/')) {
             return rtrim(self::normalise($base), '/').'/';
@@ -245,13 +249,19 @@ final class ImportGraph
 
     /**
      * @param  array<string, true>  $exists
-     * @return array<string, string> alias prefix (e.g. "@/") => directory (trailing slash)
+     * @return list<array{scope: string, prefix: string, dir: string}> aliases with the directory scope they apply to
      */
     private static function jsAliases(string $repoPath, array $exists): array
     {
+        // Every tsconfig/jsconfig in the tree (root and workspace packages such as cli/tsconfig.json) contributes
+        // aliases scoped to its own directory: "~/*" => "./src/*" in cli/tsconfig.json applies to files under cli/.
         $aliases = [];
-        foreach (['tsconfig.json', 'jsconfig.json', 'tsconfig.app.json'] as $name) {
-            $config = self::readJson($repoPath.'/'.$name);
+        foreach (array_keys($exists) as $path) {
+            if (preg_match('~(^|/)(tsconfig|jsconfig)(\.[\w-]+)?\.json$~', $path) !== 1 || substr_count($path, '/') > 2) {
+                continue;
+            }
+            $config = self::readJson($repoPath.'/'.$path);
+            $scope = dirname($path) === '.' ? '' : dirname($path).'/';
             $baseUrl = rtrim(str_replace(chr(92), '/', (string) (($config['compilerOptions'] ?? [])['baseUrl'] ?? '.')), '/');
             foreach ((array) (($config['compilerOptions'] ?? [])['paths'] ?? []) as $pattern => $targets) {
                 $first = (array) $targets;
@@ -261,15 +271,16 @@ final class ImportGraph
                 $prefix = rtrim((string) $pattern, '*');
                 $target = rtrim((string) $first[0], '*');
                 $target = ltrim(($baseUrl === '.' || $baseUrl === '' ? '' : $baseUrl.'/').ltrim($target, './'), '/');
-                $aliases[$prefix] = rtrim($target, '/').'/';
+                $aliases[] = ['scope' => $scope, 'prefix' => $prefix, 'dir' => $scope.rtrim(self::normalise($target), '/').'/'];
             }
         }
 
-        if (! isset($aliases['@/'])) {
+        $hasRootAt = array_filter($aliases, fn (array $a) => $a['scope'] === '' && $a['prefix'] === '@/') !== [];
+        if (! $hasRootAt) {
             foreach (['resources/js/', 'src/', 'resources/ts/', 'app/'] as $dir) {
                 foreach (array_keys($exists) as $path) {
                     if (str_starts_with($path, $dir)) {
-                        $aliases['@/'] = $dir;
+                        $aliases[] = ['scope' => '', 'prefix' => '@/', 'dir' => $dir];
 
                         break 2;
                     }
@@ -277,11 +288,30 @@ final class ImportGraph
             }
         }
 
+        // Longest scope first so a package's own alias beats the root's.
+        usort($aliases, fn (array $a, array $b) => strlen($b['scope']) <=> strlen($a['scope']));
+
         return $aliases;
     }
 
     /**
-     * @param  array<string, string>  $aliases
+     * The directory an aliased specifier points at for this importer, or null.
+     *
+     * @param  list<array{scope: string, prefix: string, dir: string}>  $aliases
+     */
+    private static function applyAlias(string $specifier, string $importer, array $aliases): ?string
+    {
+        foreach ($aliases as $alias) {
+            if (($alias['scope'] === '' || str_starts_with($importer, $alias['scope'])) && str_starts_with($specifier, $alias['prefix'])) {
+                return self::normalise($alias['dir'].substr($specifier, strlen($alias['prefix'])));
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  list<array{scope: string, prefix: string, dir: string}>  $aliases
      * @param  array<string, true>  $exists
      */
     private static function resolveJs(string $specifier, string $importer, array $aliases, array $exists): ?string
@@ -290,13 +320,7 @@ final class ImportGraph
         if (str_starts_with($specifier, './') || str_starts_with($specifier, '../')) {
             $base = self::normalise(dirname($importer).'/'.$specifier);
         } else {
-            foreach ($aliases as $prefix => $dir) {
-                if (str_starts_with($specifier, $prefix)) {
-                    $base = self::normalise($dir.substr($specifier, strlen($prefix)));
-
-                    break;
-                }
-            }
+            $base = self::applyAlias($specifier, $importer, $aliases);
         }
         if ($base === null) {
             return null;
@@ -304,7 +328,14 @@ final class ImportGraph
 
         $base = preg_replace('/\?.*$/', '', $base) ?? $base;
         $candidates = [$base];
-        foreach (['ts', 'tsx', 'js', 'jsx', 'vue', 'mjs', 'cjs', 'svelte', 'mts', 'd.ts'] as $ext) {
+        // TypeScript ESM: `import x from "./x.js"` refers to x.ts (or x.tsx, x.mts) in source.
+        if (preg_match('/\.(js|mjs|cjs|jsx)$/', $base, $ext) === 1) {
+            $stem = substr($base, 0, -strlen($ext[0]));
+            foreach (['ts', 'tsx', 'mts', 'cts', 'd.ts'] as $tsExt) {
+                $candidates[] = $stem.'.'.$tsExt;
+            }
+        }
+        foreach (['ts', 'tsx', 'js', 'jsx', 'vue', 'mjs', 'cjs', 'svelte', 'astro', 'mts', 'd.ts'] as $ext) {
             $candidates[] = $base.'.'.$ext;
             $candidates[] = $base.'/index.'.$ext;
         }
@@ -397,9 +428,31 @@ final class ImportGraph
             return null;
         }
 
-        // `require __DIR__.'/auth.php'` in routes/web.php mentions "/auth.php": try next to the mentioning file first.
+        // `require __DIR__.'/auth.php'` in routes/web.php mentions "/auth.php": try next to the mentioning file first,
+        // then each ancestor directory (path.join(PKG_ROOT, "template/extras/...") from cli/src/installers/x.ts).
         $dir = dirname($mentioner);
         $candidates = [$clean, ($dir === '.' ? '' : $dir.'/').$clean, self::normalise($dir.'/'.ltrim($mention, '/'))];
+        $ancestor = $dir;
+        while ($ancestor !== '.' && $ancestor !== '' && $ancestor !== '/') {
+            $candidates[] = $ancestor.'/'.$clean;
+            $ancestor = dirname($ancestor);
+        }
+        // A built artifact named in package.json (bin, main, exports, scripts) stands for its source.
+        if (preg_match('~^(?:dist|build|lib|out)/(.+)\.(?:m?js|d\.ts)$~', $clean, $built) === 1) {
+            foreach (['ts', 'tsx', 'mts', 'js', 'mjs'] as $ext) {
+                $candidates[] = 'src/'.$built[1].'.'.$ext;
+                $candidates[] = ($dir === '.' ? '' : $dir.'/').'src/'.$built[1].'.'.$ext;
+            }
+        }
+        // A dotted Python module path: 'hc.api.views' or 'hc.integrations.slack.apps.SlackConfig' (class suffix falls away).
+        if (! str_contains($mention, '/') && preg_match('/^[A-Za-z_][\w]*(?:\.[A-Za-z_]\w*)+$/', $mention) === 1) {
+            $parts = explode('.', $mention);
+            for ($take = count($parts); $take >= 1; $take--) {
+                $module = implode('/', array_slice($parts, 0, $take));
+                $candidates[] = $module.'.py';
+                $candidates[] = $module.'/__init__.py';
+            }
+        }
         if (! str_contains($clean, '.') || ! preg_match('/\.[a-z]{1,5}$/i', $clean)) {
             foreach (['php', 'js', 'ts', 'vue', 'tsx', 'jsx', 'py', 'rb'] as $ext) {
                 $candidates[] = $clean.'.'.$ext;

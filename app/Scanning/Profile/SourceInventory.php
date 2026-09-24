@@ -41,17 +41,60 @@ final class SourceInventory
 
     public static function build(string $repoPath): self
     {
+        $entries = array_values(array_filter(FileWalker::walk($repoPath), fn (array $e) => ! $e['is_link'] && $e['size'] <= self::MAX_FILE_BYTES));
+        $containers = self::containers(array_map(fn (array $e) => $e['path'], $entries));
+
         $facts = [];
-
-        foreach (FileWalker::walk($repoPath) as $entry) {
-            if ($entry['is_link'] || $entry['size'] > self::MAX_FILE_BYTES) {
-                continue;
-            }
-
-            $facts[] = self::inspect($entry['path'], $entry['absolute']);
+        foreach ($entries as $entry) {
+            $facts[] = self::inspect($entry['path'], $entry['absolute'], $containers);
         }
 
         return new self($facts);
+    }
+
+    /**
+     * Directories that are containers of areas rather than areas themselves,
+     * discovered from the tree: a Python package whose subdirectories are
+     * packages too (hc/, hc/integrations/), a workspace package with its own
+     * package.json or composer.json (cli/, www/, packages/foo/).
+     *
+     * @param  list<string>  $paths
+     * @return list<string>
+     */
+    public static function containers(array $paths): array
+    {
+        $packageDirs = [];
+        $manifestDirs = [];
+        foreach ($paths as $path) {
+            $dir = dirname($path);
+            $base = basename($path);
+            if ($base === '__init__.py') {
+                $packageDirs[$dir === '.' ? '' : $dir] = true;
+            } elseif (($base === 'package.json' || $base === 'composer.json') && $dir !== '.') {
+                $manifestDirs[$dir] = true;
+            }
+        }
+
+        $containers = [];
+        foreach (array_keys($packageDirs) as $dir) {
+            if ($dir === '' || substr_count($dir, '/') > 1) {
+                continue;
+            }
+            foreach (array_keys($packageDirs) as $other) {
+                if ($other !== $dir && str_starts_with($other, $dir.'/')) {
+                    $containers[$dir] = true;
+
+                    break;
+                }
+            }
+        }
+        foreach (array_keys($manifestDirs) as $dir) {
+            if (substr_count($dir, '/') <= 1 && ! str_contains($dir, 'node_modules')) {
+                $containers[$dir] = true;
+            }
+        }
+
+        return array_keys($containers);
     }
 
     /**
@@ -63,16 +106,17 @@ final class SourceInventory
     }
 
     /**
+     * @param  list<string>  $containers
      * @return FileFact
      */
-    private static function inspect(string $path, string $absolute): array
+    private static function inspect(string $path, string $absolute, array $containers = []): array
     {
         $family = LanguagePatterns::familyOf($path);
         $isTest = Naming::isTestName($path);
         $fact = [
             'path' => $path,
             'family' => $family,
-            'area' => Naming::areaOf($path),
+            'area' => Naming::areaOf($path, $containers),
             'kind' => Naming::kindOf($path),
             'stem' => Naming::stemOf($path),
             'is_test' => $isTest,
@@ -98,7 +142,7 @@ final class SourceInventory
 
         $textual = $family !== null
             || str_ends_with(strtolower($path), '.blade.php')
-            || in_array(strtolower(pathinfo($path, PATHINFO_EXTENSION)), ['md', 'html', 'twig', 'erb', 'json', 'yml', 'yaml', 'toml', 'css', 'scss', 'sql', 'sh', 'tf', 'xml', 'txt', 'ini', 'neon'], true);
+            || in_array(strtolower(pathinfo($path, PATHINFO_EXTENSION)), ['md', 'mdx', 'html', 'twig', 'erb', 'json', 'yml', 'yaml', 'toml', 'css', 'scss', 'sql', 'sh', 'tf', 'xml', 'txt', 'ini', 'neon'], true);
         if (! $textual) {
             return $fact;
         }
@@ -230,7 +274,7 @@ final class SourceInventory
         $imports = [];
         $pattern = match ($family) {
             'js' => '/(?:\bimport\s+(?:[^\'";]*?\s+from\s+)?|\bexport\s+(?:\*|\{[^}]*\})\s+from\s+|\brequire\(\s*|\bimport\(\s*)[\'"]([^\'"]+)[\'"]/',
-            'python' => '/^\s*(?:from\s+([\w.]+)\s+import\b|import\s+([\w.]+(?:\s*,\s*[\w.]+)*))/m',
+            'python' => '/^\s*(?:from\s+([\w.]+)\s+import\s+\(?([\w.,\s*]+?)\)?\s*(?:#.*)?$|import\s+([\w.]+(?:\s*,\s*[\w.]+)*))/m',
             'ruby' => '/^\s*require(?:_relative)?\s+[\'"]([^\'"]+)[\'"]/m',
             'go' => '/^\s*(?:import\s+)?"([^"]+)"\s*$/m',
             'java' => '/^\s*import\s+(?:static\s+)?([\w.]+)/m',
@@ -242,18 +286,35 @@ final class SourceInventory
             return [];
         }
 
-        if (preg_match_all($pattern, $contents, $matches) === 0) {
+        if (preg_match_all($pattern, $contents, $matches, PREG_SET_ORDER) === 0) {
             return [];
         }
 
-        foreach ($matches as $index => $group) {
-            if ($index === 0) {
+        foreach ($matches as $match) {
+            if ($family === 'python') {
+                // `from hc.api import views, models` names the modules hc.api.views and hc.api.models as well as the package.
+                $module = $match[1] ?? '';
+                $names = $match[2] ?? '';
+                $plain = $match[3] ?? '';
+                if ($module !== '') {
+                    $imports[$module] = true;
+                    foreach (explode(',', $names) as $name) {
+                        $name = trim(preg_replace('/\s+as\s+\w+$/', '', trim($name)) ?? '');
+                        if ($name !== '' && $name !== '*' && preg_match('/^\w+$/', $name) === 1) {
+                            $imports[rtrim($module, '.').(str_ends_with($module, '.') ? '' : '.').$name] = true;
+                        }
+                    }
+                }
+                foreach (explode(',', $plain) as $part) {
+                    $part = trim(preg_replace('/\s+as\s+\w+$/', '', trim($part)) ?? '');
+                    if ($part !== '') {
+                        $imports[$part] = true;
+                    }
+                }
+
                 continue;
             }
-            foreach ($group as $value) {
-                if ($value === '') {
-                    continue;
-                }
+            foreach (array_slice($match, 1) as $value) {
                 foreach (explode(',', $value) as $part) {
                     $part = trim($part);
                     if ($part !== '') {

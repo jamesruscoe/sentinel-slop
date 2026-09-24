@@ -77,30 +77,56 @@ final class Naming
         'modal', 'card', 'table', 'button', 'page', 'view', 'migration', 'index', 'show', 'edit', 'create', 'update', 'store', 'destroy',
         'delete', 'list', 'detail', 'details', 'item', 'items', 'use', 'api', 'type', 'types', 'component', 'partial', 'section',
         'base', 'abstract', 'default', 'main', 'app', 'application', 'impl', 'service', 'ui', 'kernel', 'settings',
+        // Python module conventions: hc/accounts/views.py belongs to "account", not to a feature called "view".
+        'init', 'urls', 'views', 'models', 'forms', 'admin', 'apps', 'signals', 'tasks', 'serializers', 'transport', 'transports',
+        'managers', 'mixins', 'validators', 'permissions', 'consumers', 'handlers', 'decorators', 'conftest', 'wsgi', 'asgi', 'manage',
     ];
 
     /** Directories where env reads are the mechanism, not a smell. */
     private const CONFIG_DIRECTORIES = ['config', 'configs', 'bootstrap', 'settings', 'env', 'environments', '.github', 'deploy', 'infra', 'docker', 'scripts', 'bin'];
 
-    public static function areaOf(string $relativePath): string
+    /**
+     * @param  list<string>  $containers  directories discovered to be containers (a Python package of packages, a
+     *                                    workspace package with its own package.json), as relative paths
+     */
+    public static function areaOf(string $relativePath, array $containers = []): string
     {
         $segments = explode('/', $relativePath);
         if (count($segments) === 1) {
             return '(root)';
         }
 
-        $first = $segments[0];
-        if (! in_array(strtolower($first), self::CONTAINERS, true) || count($segments) === 2) {
-            return $first;
+        $area = [$segments[0]];
+        $dynamic = array_fill_keys($containers, true);
+        for ($i = 1; $i < count($segments) - 1 && count($area) < 3; $i++) {
+            $prefix = implode('/', $area);
+            $lower = strtolower($area[count($area) - 1]);
+            $isContainer = isset($dynamic[$prefix])
+                || (count($area) === 1 && in_array($lower, self::CONTAINERS, true))
+                || (count($area) === 2 && in_array($lower, self::NESTED_CONTAINERS, true));
+            if (! $isContainer) {
+                break;
+            }
+            $area[] = $segments[$i];
         }
 
-        $second = $segments[1];
-        if (in_array(strtolower($second), self::NESTED_CONTAINERS, true) && count($segments) > 3) {
-            return $first.'/'.$second.'/'.$segments[2];
-        }
-
-        return $first.'/'.$second;
+        return implode('/', $area);
     }
+
+    /**
+     * Python module names that carry a role by Django/Flask convention.
+     *
+     * @var array<string, string>
+     */
+    private const PYTHON_MODULE_KINDS = [
+        'views' => 'controller', 'viewsets' => 'controller', 'api' => 'controller', 'endpoints' => 'controller', 'routes' => 'route', 'urls' => 'route',
+        'models' => 'model', 'forms' => 'form', 'admin' => 'provider', 'apps' => 'provider', 'signals' => 'listener', 'receivers' => 'listener',
+        'tasks' => 'job', 'jobs' => 'job', 'serializers' => 'presenter', 'schemas' => 'schema', 'managers' => 'repository', 'repositories' => 'repository',
+        'middleware' => 'middleware', 'decorators' => 'helper', 'utils' => 'helper', 'helpers' => 'helper', 'mixins' => 'trait', 'validators' => 'rule',
+        'permissions' => 'policy', 'consumers' => 'handler', 'handlers' => 'handler', 'transport' => 'service', 'transports' => 'service', 'services' => 'service',
+        'settings' => 'config', 'wsgi' => 'config', 'asgi' => 'config', 'manage' => 'config', 'conftest' => 'test', 'tests' => 'test', 'test' => 'test',
+        'exceptions' => 'exception', 'errors' => 'exception', 'enums' => 'enum', 'constants' => 'config', 'commands' => 'command', 'cli' => 'command', 'templatetags' => 'helper',
+    ];
 
     /**
      * The kind a file's own name suggests, ignoring its directory.
@@ -111,6 +137,10 @@ final class Naming
 
         if (self::isTestName($relativePath)) {
             return 'test';
+        }
+
+        if (strtolower(pathinfo($relativePath, PATHINFO_EXTENSION)) === 'py' && isset(self::PYTHON_MODULE_KINDS[strtolower($base)])) {
+            return self::PYTHON_MODULE_KINDS[strtolower($base)];
         }
 
         foreach (self::SUFFIX_KINDS as $suffix => $kind) {

@@ -60,12 +60,31 @@ final class GitleaksAnalyser extends ProcessAnalyser
             $name = str_replace(chr(92), '/', (string) ($leak['File'] ?? ''));
             $relative = str_starts_with($name, $root) ? substr($name, strlen($root)) : ltrim($name, '/');
             $rule = (string) ($leak['RuleID'] ?? 'secret');
+            $line = isset($leak['StartLine']) ? (int) $leak['StartLine'] : null;
 
-            $findings->add(new Finding('gitleaks', $rule, FindingCategory::Secrets, Severity::Critical, $relative,
-                isset($leak['StartLine']) ? (int) $leak['StartLine'] : null,
+            // A credential-shaped string in documentation, a test or a fixture is almost always an example
+            // (`curl -H "Authorization: Bearer your-api-key"` in api.md). It is shown, but it is not a critical
+            // secret that caps the score; the message asks for confirmation instead of asserting a leak.
+            if (self::isExampleLocation($relative)) {
+                $findings->add(new Finding('gitleaks', $rule, FindingCategory::Placeholder, Severity::Low, $relative, $line,
+                    sprintf('Credential-shaped value in documentation, a test or a fixture: %s (rule %s). Confirm it is an example, not a real secret.', (string) ($leak['Description'] ?? 'credential'), $rule)));
+
+                continue;
+            }
+
+            $findings->add(new Finding('gitleaks', $rule, FindingCategory::Secrets, Severity::Critical, $relative, $line,
                 sprintf('Possible secret: %s (rule %s). Rotate it and move it to configuration.', (string) ($leak['Description'] ?? 'credential'), $rule)));
         }
 
         return $findings;
+    }
+
+    public static function isExampleLocation(string $relativePath): bool
+    {
+        $lower = strtolower($relativePath);
+
+        return preg_match('~\.(md|rst|txt|adoc)$~', $lower) === 1
+            || preg_match('~(^|/)(docs?|documentation|examples?|samples?|fixtures?|tests?|__tests__|spec|specs|e2e|cypress|playwright|__mocks__|snapshots?|migrations|templates?|stubs?|scaffolds?|boilerplate)/~', $lower) === 1
+            || preg_match('~(^|/)test_[^/]+\.py$|[._-](test|spec)\.[a-z]+$|test\.php$~', $lower) === 1;
     }
 }

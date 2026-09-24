@@ -10,6 +10,7 @@ use App\Scanning\Data\Stack;
 use App\Scanning\Enums\FindingCategory;
 use App\Scanning\Enums\Severity;
 use App\Scanning\Exceptions\AnalyserFailedException;
+use App\Scanning\Profile\Naming;
 
 /**
  * jscpd copy/paste detection with the bundled config (repo .jscpd.json,
@@ -91,7 +92,9 @@ final class JscpdAnalyser extends ProcessAnalyser
                 continue;
             }
 
-            $findings->add(new Finding('jscpd', 'duplicate-block', FindingCategory::Duplication, $lines >= 30 && $statements >= 10 ? Severity::Medium : Severity::Low, $file, $line,
+            // Two test files sharing a block is a fixture, not a defect: never more than Low.
+            $bothTests = Naming::isTestName($file) && Naming::isTestName($relative((string) ($first['name'] ?? '')));
+            $findings->add(new Finding('jscpd', 'duplicate-block', FindingCategory::Duplication, $lines >= 30 && $statements >= 10 && ! $bothTests ? Severity::Medium : Severity::Low, $file, $line,
                 sprintf('%d duplicated lines (%d statements) also found in %s:%d.', $lines, $statements, $relative((string) ($first['name'] ?? '')), (int) ($first['start'] ?? 0)),
                 $fragment !== '' ? implode("\n", array_slice(preg_split('/\r\n|\n/', $fragment) ?: [], 0, 6)) : null));
         }

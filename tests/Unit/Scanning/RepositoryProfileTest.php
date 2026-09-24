@@ -54,8 +54,9 @@ test('a well-structured laravel app produces no absence findings', function () {
 test('a framework-less python package with nothing in place produces exactly the expected absence findings', function () {
     [$profile, $findings] = profileFixture('python-service');
 
-    // Handlers, jobs and five repositories are imported by nothing: nothing in the package wires them up (one finding, one area).
-    expect(ruleIds($findings))->toBe(['env-read-outside-config', 'no-input-validation', 'no-logging-anywhere', 'no-tests-at-all', 'unguarded-external-calls', 'unreferenced-code'])
+    // Handlers, jobs and the repositories are imported by nothing: nothing in the package wires them up. The package
+    // `shipping` is a container (it has sub-packages), so its sub-directories are separate areas: three findings.
+    expect(ruleIds($findings))->toBe(['env-read-outside-config', 'no-input-validation', 'no-logging-anywhere', 'no-tests-at-all', 'unguarded-external-calls', 'unreferenced-code', 'unreferenced-code', 'unreferenced-code'])
         // 20: the shipment repository is referenced only by the dead jobs, so the fixed point marks it dead as well.
         ->and(count($profile->section('reachability')['unreferenced']))->toBe(20);
 

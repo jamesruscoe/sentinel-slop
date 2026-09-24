@@ -88,11 +88,18 @@ final class DependencyIndex
             }
         }
 
-        $packageJson = self::readJson($root.'/package.json', 512 * 1024) ?? [];
+        // Every package.json in the tree declares dependencies: the root plus workspace packages (cli/, www/,
+        // packages/*/). A monorepo's imports would otherwise all look undeclared.
         $npmDeclared = [];
-        foreach (['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'] as $section) {
-            foreach (array_keys(is_array($packageJson[$section] ?? null) ? $packageJson[$section] : []) as $name) {
-                $npmDeclared[strtolower((string) $name)] = true;
+        foreach (array_merge([$root.'/package.json'], glob($root.'/*/package.json') ?: [], glob($root.'/*/*/package.json') ?: []) as $manifest) {
+            if (str_contains(str_replace(chr(92), '/', $manifest), '/node_modules/')) {
+                continue;
+            }
+            $packageJson = self::readJson($manifest, 512 * 1024) ?? [];
+            foreach (['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'] as $section) {
+                foreach (array_keys(is_array($packageJson[$section] ?? null) ? $packageJson[$section] : []) as $name) {
+                    $npmDeclared[strtolower((string) $name)] = true;
+                }
             }
         }
 

@@ -19,7 +19,7 @@ final class LanguagePatterns
 {
     public const FAMILIES = [
         'php' => ['php'],
-        'js' => ['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'mts', 'cts', 'vue', 'svelte'],
+        'js' => ['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'mts', 'cts', 'vue', 'svelte', 'astro'],
         'python' => ['py'],
         'ruby' => ['rb'],
         'go' => ['go'],

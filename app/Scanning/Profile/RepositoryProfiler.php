@@ -471,6 +471,9 @@ final class RepositoryProfiler
             if (in_array($package, ['pytest', 'nose', 'nose2', 'hypothesis'], true)) {
                 $frameworks[] = $package;
             }
+            if ($package === 'django') {
+                $frameworks[] = 'django test runner';
+            }
         }
         $frameworks = array_values(array_unique($frameworks));
 
@@ -787,8 +790,11 @@ final class RepositoryProfiler
 
         // Reportable: enough lines would go, or the block recurs and still saves something real. Three copies of a
         // 12-line mail builder save 24 lines and are template boilerplate, not a base class waiting to happen.
-        $reportable = array_filter($clusters, fn (array $c) => $c['lines_saved'] >= $this->config->minClusterSavedLines
-            || ($c['occurrences'] >= $this->config->minClusterOccurrences && $c['lines_saved'] >= (int) ceil($this->config->minClusterSavedLines / 2)));
+        // Tests repeat by nature (the same setup in nine test_notify files is a fixture, not a base class); a cluster
+        // made only of test files stays in the profile and never becomes a finding.
+        $reportable = array_filter($clusters, fn (array $c) => ($c['lines_saved'] >= $this->config->minClusterSavedLines
+            || ($c['occurrences'] >= $this->config->minClusterOccurrences && $c['lines_saved'] >= (int) ceil($this->config->minClusterSavedLines / 2)))
+            && array_filter($c['locations'], fn (string $l) => ! Naming::isTestName(explode(':', $l)[0])) !== []);
         $covered = [];
         foreach ($reportable as $cluster) {
             foreach ($cluster['locations'] as $location) {
@@ -852,6 +858,9 @@ final class RepositoryProfiler
 
     private const REACHABILITY_EXEMPT_PATHS = ['bootstrap/', 'public/', 'database/', 'tests/', 'app/Console/', 'app/Providers/', 'app/Livewire/', 'app/View/', 'app/Filament/', 'app/Nova/', 'app/Exceptions/', '.github/', 'docker/', 'terraform/', 'scripts/', 'bin/'];
 
+    /** Directory names, at any depth, whose modules a framework loads by name (Django template tags, management commands). */
+    private const REACHABILITY_EXEMPT_DIRS = ['templatetags', 'management', 'migrations', 'commands', 'fixtures', 'locale', 'template', 'templates', 'stubs', 'stub', 'scaffold', 'scaffolds', 'skeleton', 'boilerplate', 'examples', 'example'];
+
     /** Basenames that are entry points a framework, runtime or bundler loads by name. */
     private const ENTRY_NAMES = ['app', 'main', 'index', 'ssr', 'bootstrap', 'echo', 'setup', 'entry', 'server', 'client', 'cli', 'artisan', 'manage', 'wsgi', 'asgi', 'settings', 'urls', 'admin', 'apps', 'tasks', 'signals', 'conftest', '__init__', '__main__', 'celery', 'kernel', 'handler', 'lambda_function', 'vite-env', 'env', 'page', 'layout', 'route', 'loading', 'error', 'not-found', 'template', 'middleware', 'application', 'environment', 'boot', 'seeds', 'web', 'api', 'console', 'channels', 'preload', 'renderer'];
 
@@ -903,6 +912,11 @@ final class RepositoryProfiler
             }
             foreach (self::REACHABILITY_EXEMPT_PATHS as $prefix) {
                 if (str_starts_with($file['path'], $prefix)) {
+                    continue 2;
+                }
+            }
+            foreach (explode('/', dirname($file['path'])) as $segment) {
+                if (in_array(strtolower($segment), self::REACHABILITY_EXEMPT_DIRS, true)) {
                     continue 2;
                 }
             }
@@ -1102,7 +1116,8 @@ final class RepositoryProfiler
         $hasChildren = [];
         $grabBags = [];
         foreach ($all as $file) {
-            if ($file['is_test'] || in_array($file['kind'], ['asset', 'doc', 'infra', 'migration'], true)) {
+            // Templates and emails live in flat directories by convention; a dumping ground is about code.
+            if ($file['is_test'] || in_array($file['kind'], ['asset', 'doc', 'infra', 'migration', 'view'], true)) {
                 continue;
             }
             $dir = dirname($file['path']);
