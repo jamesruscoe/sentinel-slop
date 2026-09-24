@@ -14,6 +14,8 @@ Refer to code only by names you were given: the symbol a finding names after the
 
 The rulesets below are Sentinel Slop's own reference material. The developer's repository does not contain them, so never cite one by name, file or section ("per php.md", "laravel.md's logging rule"): state the rule inline in your own words ("never swallow an exception: a catch must rethrow, wrap, or return a failure value the caller checks") or attribute it generically ("standard Laravel practice").
 
+The same discipline applies to consequences. A finding states an observation about the code ("this catch logs and returns null without rethrowing"); what follows from it depends on call sites and runtime behaviour you have not seen. Never claim that a test fails, that a caller is unaware, that an operation silently succeeds, or that a change is safe, unless a finding states it. Where the impact depends on how the code is used, write "confirm X, then do Y": "confirm every caller of this method checks for null; if one does not, rethrow". A catch that logs and returns null or false is fail-soft by design and may be exactly right (a retrying queue or Lambda runtime needs the exception, a best-effort cleanup does not); only an empty catch is a defect on its own. Swallowed errors in scripts, tests and end-to-end suites are usually deliberate.
+
 The same discipline applies to what code does. Describe a duplicated block only by its locations, its size and the lines shown in its snippet; if the snippet shows validation rules, say so, and if it shows nothing, say "a 14-line block" and stop. Never guess what a block you were not shown contains ("likely tenant scoping", "probably the mail builder").
 
 ## What counts as a structural problem

@@ -40,6 +40,10 @@ final class SwallowedExceptionsHeuristic implements Heuristic
         $findings = new FindingCollection;
 
         foreach (SourceFiles::in($path, SourceFiles::PHP) as $file) {
+            // Scripts, tests and end-to-end suites swallow on purpose (a Playwright timeout, a best-effort cleanup).
+            if (SourceFiles::isTestFile($file['path']) || preg_match('~^(scripts|bin|tools|e2e)/~', $file['path']) === 1) {
+                continue;
+            }
             $ast = PhpSource::parse($file['absolute']);
             if ($ast === null) {
                 continue;
@@ -50,10 +54,12 @@ final class SwallowedExceptionsHeuristic implements Heuristic
 
                 if ($statements === []) {
                     $findings->add(new Finding($this->name(), 'empty-catch', FindingCategory::ErrorHandling, Severity::Medium, $file['path'], $catch->getStartLine(),
-                        'Empty catch block swallows the exception; handle it, rethrow it, or document why it is safe to ignore.'));
+                        'Empty catch block: the exception is discarded without being logged, rethrown or turned into a return value. Handle it, rethrow it, or document why ignoring it is intended.'));
                 } elseif ($this->onlyLogsAndContinues($statements)) {
-                    $findings->add(new Finding($this->name(), 'catch-only-logs', FindingCategory::ErrorHandling, Severity::Medium, $file['path'], $catch->getStartLine(),
-                        'Catch block only logs and continues; callers never learn the operation failed.'));
+                    // Log-and-return-empty is fail-soft by design (our own ruleset recommends it); whether it is right
+                    // depends on the callers, which this heuristic has not read. Observation only, Low.
+                    $findings->add(new Finding($this->name(), 'catch-only-logs', FindingCategory::ErrorHandling, Severity::Low, $file['path'], $catch->getStartLine(),
+                        'Catch block logs and returns an empty value (null, false, an empty array) without rethrowing. Confirm every caller checks that return value; if one does not, rethrow or return an explicit failure result there.'));
                 }
             }
         }

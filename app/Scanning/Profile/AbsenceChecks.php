@@ -71,7 +71,7 @@ final class AbsenceChecks
         $loggingFiles = (int) ($logging['files_logging'] ?? 0);
         if ($assessed && $isApplication && $loggingFiles === 0 && $sourceFiles >= $this->config->minSourceFilesForLogging) {
             $findings->add($this->finding('no-logging-anywhere', Severity::Medium, '',
-                sprintf('No logging was found in any of the %d source files: no logger import, no logging call and no file that references a logger. Uncaught exceptions are still logged by the framework handler where one exists; this is about deliberate logging of business events and handled failures.', $sourceFiles)));
+                sprintf('No logging was found in any of the %d source files: no logger import, no logging call and no file that references a logger. Uncaught exceptions are still logged by the framework handler where one exists; handled failures and state transitions are not logged anywhere.', $sourceFiles)));
         } elseif ($loggingFiles > 0) {
             foreach ($areas as $area) {
                 if (! $area['assessed'] || ! $area['service_like'] || $area['logging_files'] > 0 || $area['source_files'] < $this->config->minServiceFilesForLogging) {
@@ -84,7 +84,7 @@ final class AbsenceChecks
                     ? sprintf('no %s file anywhere in the repository logs', RepositoryProfiler::familyName($family))
                     : sprintf('%d other %s files do, via %s', $familyLogging, RepositoryProfiler::familyName($family), implode(', ', array_slice((array) ($familyCounts['mechanisms'] ?? []), 0, 3)));
                 $findings->add($this->finding('no-logging-in-layer', Severity::Medium, (string) $area['area'],
-                    sprintf('%s has %d source files (%s) and none of them logs: no logger import, no logging call, and none imports a repository file that logs (%s). Uncaught exceptions still reach the framework handler; handled failures and business events in this layer leave no trace. Examples: %s.',
+                    sprintf('%s has %d source files (%s) and none of them logs: no logger import, no logging call, and none imports a repository file that logs (%s). Uncaught exceptions still reach the framework handler; handled failures and state transitions in this layer are not logged anywhere. Examples: %s.',
                         $area['area'], $area['source_files'], self::kinds($area['kinds']), $elsewhere, self::examples($area['largest_files']))));
             }
         }
@@ -146,7 +146,7 @@ final class AbsenceChecks
         foreach ((array) ($reachability['missing_own_classes'] ?? []) as $missing) {
             $dead = isset($unreferencedPaths[$missing['file']]);
             $findings->add(new Finding(self::TOOL, 'missing-own-class', FindingCategory::Structure, $dead ? Severity::Medium : Severity::High, (string) $missing['file'], null,
-                sprintf('%s references %s, which no file in the repository declares; reaching that code fails at runtime.%s', $missing['file'], $missing['class'],
+                sprintf('%s references %s, which no file in the repository declares; PHP throws a class-not-found error when that line executes.%s', $missing['file'], $missing['class'],
                     $dead ? ' The referencing file is itself unreferenced: delete both.' : ' Implement the class or remove the reference.')));
         }
 

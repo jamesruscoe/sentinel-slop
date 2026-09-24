@@ -15,8 +15,8 @@ rules:
 
   - id: sentinel.slop.js.catch-only-logs
     languages: [javascript, typescript]
-    severity: WARNING
-    message: "Catch block only logs and continues; the failure is silently swallowed"
+    severity: INFO
+    message: "Catch block logs and returns without rethrowing. Confirm every caller handles the empty result; if one does not, rethrow or return an explicit failure"
     metadata:
       sentinel_category: error_handling
     pattern-either:
@@ -32,7 +32,7 @@ rules:
   - id: sentinel.slop.js.promise-catch-only-logs
     languages: [javascript, typescript]
     severity: INFO
-    message: "Promise rejection is only logged; callers never learn the operation failed"
+    message: "Promise rejection is only logged, not rethrown or returned. Confirm the awaiting code handles the missing result; in scripts and tests this is often deliberate"
     metadata:
       sentinel_category: error_handling
     pattern-either:

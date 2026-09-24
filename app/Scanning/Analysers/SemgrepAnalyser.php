@@ -9,6 +9,8 @@ use App\Scanning\Data\AnalyserOptions;
 use App\Scanning\Data\Finding;
 use App\Scanning\Data\FindingCollection;
 use App\Scanning\Data\Stack;
+use App\Scanning\Enums\FindingCategory;
+use App\Scanning\Enums\Severity;
 use App\Scanning\Exceptions\AnalyserFailedException;
 use App\Scanning\Process\ToolLocator;
 
@@ -111,10 +113,18 @@ final class SemgrepAnalyser extends ProcessAnalyser
             $checkId = (string) ($hit['check_id'] ?? '');
             $checkId = ((int) preg_match('/(sentinel[.].*)$/', $checkId, $m) === 1) ? $m[1] : $checkId;
 
+            $message = trim((string) ($extra['message'] ?? ''));
+            // Error-handling findings in scripts, tests and end-to-end suites: swallowing there is usually deliberate
+            // (a Playwright timeout, a best-effort cleanup). Kept as Low with the caveat in the message.
+            if ($category === FindingCategory::ErrorHandling && $severity->rank() > Severity::Low->rank() && preg_match('~(^|/)(scripts|bin|tools|tests?|__tests__|spec|e2e|cypress|playwright)/~', $relative) === 1) {
+                $severity = Severity::Low;
+                $message .= ' (In a script or test: confirm this is not deliberate before changing it.)';
+            }
+
             // Never use Semgrep's extra.lines as the snippet: without a logged-in account it is the literal
             // text "requires login", which a reviewer then quoted as if it were the code. We have the file.
             $findings->add(new Finding($this->name(), $checkId, $category, $severity, $relative, $line,
-                trim((string) ($extra['message'] ?? '')), $this->snippetFrom($path, $relative, $line)));
+                $message, $this->snippetFrom($path, $relative, $line)));
         }
 
         return $findings;

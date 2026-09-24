@@ -99,7 +99,7 @@ final class PlaceholderCodeHeuristic implements Heuristic
             if ($this->isTrivialBody($statements) && $function instanceof ClassMethod && ! $function->isAbstract() && $name !== '__construct'
                 && ($this->hasTodoComment($function) || $this->hasTodoWithin($lines, $function->getStartLine(), $function->getEndLine()))) {
                 $findings->add(new Finding($this->name(), 'unimplemented-method', FindingCategory::Placeholder, Severity::Medium, $file['path'], $function->getStartLine(),
-                    "{$name}() is unimplemented: its body is ".($statements === [] ? 'empty' : 'a placeholder return').' and carries a TODO. Callers get nothing useful back.'));
+                    "{$name}() is unimplemented: its body is ".($statements === [] ? 'empty' : 'a placeholder return').' and carries a TODO. Confirm what its callers do with the result, then implement it or remove it.'));
             }
         }
     }
