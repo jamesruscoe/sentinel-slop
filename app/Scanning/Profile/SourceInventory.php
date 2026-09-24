@@ -192,7 +192,8 @@ final class SourceInventory
      */
     private static function mentionsIn(string $contents): array
     {
-        if (preg_match_all('~[\'"]([A-Za-z0-9_@][A-Za-z0-9_.\-/]{2,200})[\'"]~', $contents, $m) === 0) {
+        // Leading "/" and "." are allowed: `require __DIR__.'/auth.php'` mentions "/auth.php", imports mention "./x".
+        if (preg_match_all('~[\'"]([A-Za-z0-9_@./][A-Za-z0-9_.\-/]{2,200})[\'"]~', $contents, $m) === 0) {
             return [];
         }
 

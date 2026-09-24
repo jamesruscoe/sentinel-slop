@@ -43,7 +43,7 @@ final class ImportGraph
     }
 
     /**
-     * @param  list<array{path: string, family: string|null, imports: list<string>, mentions?: list<string>}>  $files
+     * @param  list<array{path: string, family: string|null, imports: list<string>, mentions?: list<string>, is_config_path?: bool}>  $files
      */
     public static function build(string $repoPath, array $files): self
     {
@@ -79,14 +79,18 @@ final class ImportGraph
             // 'emails.booking' in view(), app/helpers.php in composer.json, resources/js/app.ts in @vite().
             foreach ($file['mentions'] ?? [] as $mention) {
                 if (str_starts_with($mention, 'glob:')) {
-                    $prefix = self::globPrefix(substr($mention, 5), $file['path'], $aliases);
-                    if ($prefix !== null) {
-                        $globbed[$prefix] = true;
+                    // Only globs in application code load files (import.meta.glob, require.context). A tsconfig
+                    // include, tailwind content list or eslint pattern covering resources/js/** references nothing.
+                    if (in_array($file['family'], ['js', 'php', 'python'], true) && ! ($file['is_config_path'] ?? false)) {
+                        $prefix = self::globPrefix(substr($mention, 5), $file['path'], $aliases);
+                        if ($prefix !== null) {
+                            $globbed[$prefix] = true;
+                        }
                     }
 
                     continue;
                 }
-                $target = self::resolveMention($mention, $exists, $pageRoots);
+                $target = self::resolveMention($mention, $file['path'], $exists, $pageRoots);
                 if ($target !== null && $target !== $file['path']) {
                     $targets[$target] = true;
                 }
@@ -386,14 +390,16 @@ final class ImportGraph
      * @param  array<string, true>  $exists
      * @param  list<string>  $pageRoots
      */
-    private static function resolveMention(string $mention, array $exists, array $pageRoots): ?string
+    private static function resolveMention(string $mention, string $mentioner, array $exists, array $pageRoots): ?string
     {
         $clean = self::normalise(preg_replace('~^(?:\./|\.\./)+~', '', ltrim($mention, '/')) ?? $mention);
         if ($clean === '') {
             return null;
         }
 
-        $candidates = [$clean];
+        // `require __DIR__.'/auth.php'` in routes/web.php mentions "/auth.php": try next to the mentioning file first.
+        $dir = dirname($mentioner);
+        $candidates = [$clean, ($dir === '.' ? '' : $dir.'/').$clean, self::normalise($dir.'/'.ltrim($mention, '/'))];
         if (! str_contains($clean, '.') || ! preg_match('/\.[a-z]{1,5}$/i', $clean)) {
             foreach (['php', 'js', 'ts', 'vue', 'tsx', 'jsx', 'py', 'rb'] as $ext) {
                 $candidates[] = $clean.'.'.$ext;
