@@ -73,9 +73,13 @@ final class CategoryMapper
             str_starts_with($code, 'E9') || $code === 'F821' || $code === 'F822' || $code === 'F823' => [FindingCategory::TypeSafety, Severity::High],
             in_array($code, ['F401', 'F841', 'F811', 'F842'], true) || str_starts_with($code, 'ARG') || str_starts_with($code, 'ERA') => [FindingCategory::DeadCode, Severity::Low],
             str_starts_with($code, 'F') => [FindingCategory::TypeSafety, Severity::Medium],
-            in_array($code, ['S102', 'S307', 'S602', 'S605', 'S609', 'S324'], true) => [FindingCategory::Security, Severity::High],
+            // exec/eval, shell=True, os.system with a variable: High. S324 ("probable" insecure hash) is Ruff guessing
+            // at intent (sha1 for a cache key is fine) and stays Medium.
+            in_array($code, ['S102', 'S307', 'S602', 'S605', 'S609'], true) => [FindingCategory::Security, Severity::High],
             str_starts_with($code, 'S') => [FindingCategory::Security, Severity::Medium],
-            str_starts_with($code, 'BLE') || in_array($code, ['B904', 'B012', 'B030', 'E722', 'TRY002', 'TRY200', 'TRY201', 'TRY302', 'TRY400', 'TRY401'], true) => [FindingCategory::ErrorHandling, Severity::Medium],
+            str_starts_with($code, 'BLE') || in_array($code, ['B012', 'B030', 'E722', 'TRY002', 'TRY200', 'TRY201', 'TRY302', 'TRY400', 'TRY401'], true) => [FindingCategory::ErrorHandling, Severity::Medium],
+            // raise-without-from inside except loses the chain: worth fixing, not a defect on its own.
+            $code === 'B904' => [FindingCategory::ErrorHandling, Severity::Low],
             str_starts_with($code, 'TRY') => [FindingCategory::ErrorHandling, Severity::Low],
             str_starts_with($code, 'C9') => [FindingCategory::Complexity, Severity::Medium],
             str_starts_with($code, 'B') || str_starts_with($code, 'PLE') => [FindingCategory::TypeSafety, Severity::Medium],
