@@ -61,7 +61,12 @@ final class AbsenceChecks
                 if (! $area['assessed'] || ! $area['logic'] || $area['linked_tests'] > 0 || $area['test_files'] > 0 || $area['source_files'] < $this->config->minAreaFilesForTests) {
                     continue;
                 }
-                $findings->add($this->finding('no-tests-in-area', $area['service_like'] ? Severity::High : Severity::Medium, (string) $area['area'],
+                // High only for a real service layer; a directory of management commands or scripts is Medium.
+                $domain = 0;
+                foreach (['service', 'job', 'listener', 'action', 'repository', 'handler'] as $kind) {
+                    $domain += (int) ($area['kinds'][$kind] ?? 0);
+                }
+                $findings->add($this->finding('no-tests-in-area', $area['service_like'] && $domain > 0 ? Severity::High : Severity::Medium, (string) $area['area'],
                     sprintf('%s has %d source files (%s) and none of the %d test files links to it by path, by name or by import. Examples: %s.',
                         $area['area'], $area['source_files'], self::kinds($area['kinds']), (int) ($tests['test_files'] ?? 0), self::examples($area['largest_files']))));
             }

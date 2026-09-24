@@ -51,6 +51,18 @@ final class SourceFiles
     }
 
     /**
+     * Files a tool copies into other projects (CLI scaffolds, Laravel stubs,
+     * cookiecutter templates): variants that must stand alone, importing
+     * packages the generated project declares. Not this repository's code
+     * in the ordinary sense.
+     */
+    public static function isTemplateFile(string $relativePath): bool
+    {
+        return preg_match('~(^|/)(templates?|stubs?|scaffolds?|skeletons?|boilerplate|cookiecutter[^/]*)(/|$)~i', $relativePath) === 1
+            && ! str_contains(strtolower($relativePath), 'resources/views');
+    }
+
+    /**
      * @return list<string>
      */
     public static function lines(string $absolutePath): array

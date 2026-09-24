@@ -72,11 +72,34 @@ final class GitleaksAnalyser extends ProcessAnalyser
                 continue;
             }
 
+            // A key the code itself labels as public or client-side (an Algolia search key, a NEXT_PUBLIC_ or VITE_
+            // value, a reCAPTCHA site key, an OAuth client id) is published by design. Shown, never score-capping.
+            if ($line !== null && self::looksPublic($path, $relative, $line)) {
+                $findings->add(new Finding('gitleaks', $rule, FindingCategory::Placeholder, Severity::Low, $relative, $line,
+                    sprintf('Credential-shaped value that the surrounding code labels as public or client-side: %s (rule %s). Confirm it is a publishable key; if it is not, rotate it and move it to configuration.', (string) ($leak['Description'] ?? 'credential'), $rule)));
+
+                continue;
+            }
+
             $findings->add(new Finding('gitleaks', $rule, FindingCategory::Secrets, Severity::Critical, $relative, $line,
                 sprintf('Possible secret: %s (rule %s). Rotate it and move it to configuration.', (string) ($leak['Description'] ?? 'credential'), $rule)));
         }
 
         return $findings;
+    }
+
+    /**
+     * The flagged line, or the four lines above it, name the value as public.
+     */
+    private static function looksPublic(string $repoPath, string $relative, int $line): bool
+    {
+        $contents = @file($repoPath.'/'.$relative);
+        if ($contents === false) {
+            return false;
+        }
+        $window = implode("\n", array_slice($contents, max(0, $line - 5), 5));
+
+        return preg_match('/algolia|public|search[_ -]?(?:only[_ -]?)?(?:api[_ -]?)?key|next_public_|vite_|nuxt_public_|react_app_|site[_ -]?key|client[_ -]?id|anon[_ -]?key|publishable|pk_(?:live|test)_|measurement[_ -]?id|recaptcha|turnstile|stripe[_ -]?public/i', $window) === 1;
     }
 
     public static function isExampleLocation(string $relativePath): bool

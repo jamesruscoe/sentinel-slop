@@ -11,6 +11,7 @@ use App\Scanning\Data\PreflightConfig;
 use App\Scanning\Data\PreflightResult;
 use App\Scanning\Data\SkippedFile;
 use App\Scanning\Detect\DependencyIndex;
+use App\Scanning\Enums\FindingCategory;
 use App\Scanning\Enums\Severity;
 use App\Scanning\Enums\SkipReason;
 use App\Scanning\Exceptions\PreflightFailedException;
@@ -78,7 +79,9 @@ final class PreflightChecker
         $findings = new FindingCollection;
         foreach ($this->securityAnalysers as $analyser) {
             $findings = $findings->merge(
-                $analyser->run($repoPath)->map(fn (Finding $f) => $f->with(['severity' => Severity::Critical->value]))
+                // Malware hits and real secrets are critical. A credential-shaped value the analyser already judged to be
+                // an example (docs, tests, fixtures) or a public key keeps its Low severity and Placeholder category.
+                $analyser->run($repoPath)->map(fn (Finding $f) => $f->category === FindingCategory::Placeholder ? $f : $f->with(['severity' => Severity::Critical->value]))
             );
         }
 

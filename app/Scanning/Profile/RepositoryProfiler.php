@@ -8,6 +8,7 @@ use App\Scanning\Data\Finding;
 use App\Scanning\Data\FindingCollection;
 use App\Scanning\Data\Stack;
 use App\Scanning\Detect\DependencyIndex;
+use App\Scanning\Heuristics\SourceFiles;
 
 /**
  * Computes the RepositoryProfile from the file tree alone (plus jscpd's
@@ -394,7 +395,8 @@ final class RepositoryProfiler
         $configSites = 0;
         foreach ($source as $file) {
             $configSites += $file['signals']['config_read'];
-            if ($file['is_test'] || $file['is_config_path'] || in_array($file['kind'], ['seeder', 'factory', 'migration', 'script', 'infra', 'test'], true) || $file['signals']['env_read'] === 0) {
+            // A template's env.js is the generated project's config module, not this repository reading its environment.
+            if ($file['is_test'] || $file['is_template'] || $file['is_config_path'] || in_array($file['kind'], ['seeder', 'factory', 'migration', 'script', 'infra', 'test'], true) || $file['signals']['env_read'] === 0) {
                 continue;
             }
             $sites += $file['signals']['env_read'];
@@ -790,11 +792,12 @@ final class RepositoryProfiler
 
         // Reportable: enough lines would go, or the block recurs and still saves something real. Three copies of a
         // 12-line mail builder save 24 lines and are template boilerplate, not a base class waiting to happen.
-        // Tests repeat by nature (the same setup in nine test_notify files is a fixture, not a base class); a cluster
-        // made only of test files stays in the profile and never becomes a finding.
+        // Tests repeat by nature (the same setup in nine test_notify files is a fixture, not a base class), and template
+        // variants a CLI copies into other projects must stand alone; a cluster made only of such files stays in the
+        // profile and never becomes a finding.
         $reportable = array_filter($clusters, fn (array $c) => ($c['lines_saved'] >= $this->config->minClusterSavedLines
             || ($c['occurrences'] >= $this->config->minClusterOccurrences && $c['lines_saved'] >= (int) ceil($this->config->minClusterSavedLines / 2)))
-            && array_filter($c['locations'], fn (string $l) => ! Naming::isTestName(explode(':', $l)[0])) !== []);
+            && array_filter($c['locations'], fn (string $l) => ! Naming::isTestName(explode(':', $l)[0]) && ! SourceFiles::isTemplateFile(explode(':', $l)[0])) !== []);
         $covered = [];
         foreach ($reportable as $cluster) {
             foreach ($cluster['locations'] as $location) {

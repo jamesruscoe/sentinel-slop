@@ -6,6 +6,7 @@ namespace App\Scanning\Profile;
 
 use App\Scanning\Detect\DependencyIndex;
 use App\Scanning\Heuristics\PhpSource;
+use App\Scanning\Heuristics\SourceFiles;
 use App\Scanning\Support\FileWalker;
 use PhpParser\Node;
 use PhpParser\Node\Stmt\ClassMethod;
@@ -21,7 +22,7 @@ use PhpParser\NodeVisitor\NameResolver;
  * fully qualified names, not guesses at what an alias means.
  *
  * @phpstan-type FileFact array{
- *   path: string, family: string|null, area: string, kind: string, stem: string|null, is_test: bool, is_config_path: bool,
+ *   path: string, family: string|null, area: string, kind: string, stem: string|null, is_test: bool, is_template: bool, is_config_path: bool,
  *   lines: int, code_lines: int, comment_lines: int, depth: int,
  *   references: list<string>, imports: list<string>, declares: list<string>, mentions: list<string>,
  *   signals: array<string, int>,
@@ -120,6 +121,7 @@ final class SourceInventory
             'kind' => Naming::kindOf($path),
             'stem' => Naming::stemOf($path),
             'is_test' => $isTest,
+            'is_template' => SourceFiles::isTemplateFile($path),
             'is_config_path' => Naming::isConfigPath($path),
             'lines' => 0,
             'code_lines' => 0,

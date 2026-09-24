@@ -22,7 +22,7 @@ use Illuminate\Console\Command;
  */
 class ScanFixtureCommand extends Command
 {
-    protected $signature = 'sentinel:scan-fixture {path : A fixture name under tests/Fixtures/repos or an absolute directory} {--model= : Prism model id} {--editor=claude_code : Editor whose prompts to print} {--no-payload : Do not print the LLM payload} {--no-profile : Do not print the repository profile} {--no-synthesis : Skip the LLM call (findings and score only)}';
+    protected $signature = 'sentinel:scan-fixture {path : A fixture name under tests/Fixtures/repos or an absolute directory} {--model= : Prism model id} {--editor=claude_code : Editor whose prompts to print} {--no-payload : Do not print the LLM payload} {--no-profile : Do not print the repository profile} {--no-synthesis : Skip the LLM call (findings and score only)} {--as= : Username whose scan history the local scan belongs to (default: the only GitHub user, else a local-fixtures user)}';
 
     protected $description = 'Scan a local directory through the full pipeline synchronously and print the results (development only)';
 
@@ -43,9 +43,15 @@ class ScanFixtureCommand extends Command
         }
 
         $name = 'local/'.basename($directory);
-        $user = User::query()->firstOrCreate(['github_id' => 0], ['username' => 'local-fixtures', 'name' => 'Local fixtures']);
+        // Local scans belong to a real user so they show in that user's history: --as=<username>, or the only
+        // GitHub-authenticated user when there is exactly one; otherwise a synthetic "local-fixtures" user.
+        $user = $this->owner();
         $installation = Installation::query()->firstOrCreate(['github_installation_id' => 0], ['user_id' => $user->id, 'account_login' => 'local', 'account_type' => 'User']);
+        if ($installation->user_id !== $user->id) {
+            $installation->forceFill(['user_id' => $user->id])->save();
+        }
         $repository = Repository::query()->firstOrCreate(['github_repo_id' => crc32($name)], ['installation_id' => $installation->id, 'full_name' => $name, 'default_branch' => 'main']);
+        $this->line("Scanning {$directory} as {$user->username} (repository {$name}).");
 
         // Everything runs inline, including broadcasts, and Reverb may not be up.
         config(['sentinel.queue.connection' => 'sync', 'broadcasting.default' => 'null']);
@@ -142,6 +148,21 @@ class ScanFixtureCommand extends Command
         }
 
         return self::SUCCESS;
+    }
+
+    private function owner(): User
+    {
+        $as = $this->option('as');
+        if (is_string($as) && $as !== '') {
+            return User::query()->where('username', $as)->firstOrFail();
+        }
+
+        $real = User::query()->where('github_id', '!=', 0)->get();
+        if ($real->count() === 1) {
+            return $real->first();
+        }
+
+        return User::query()->firstOrCreate(['github_id' => 0], ['username' => 'local-fixtures', 'name' => 'Local fixtures']);
     }
 
     private function section(string $title): void

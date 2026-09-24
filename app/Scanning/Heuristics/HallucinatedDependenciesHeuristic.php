@@ -81,6 +81,10 @@ final class HallucinatedDependenciesHeuristic implements Heuristic
         $reported = [];
 
         foreach ($this->composer->scan($path, $composer) as $hit) {
+            // A stub or template imports what the generated project declares, not what this repository declares.
+            if (SourceFiles::isTemplateFile($hit['file'])) {
+                continue;
+            }
             $package = $index->resolvePhp($hit['name']);
 
             if ($package !== null) {
@@ -124,6 +128,9 @@ final class HallucinatedDependenciesHeuristic implements Heuristic
         $workspaces = isset($package['workspaces']);
 
         foreach ($this->npm->scan($path, $package, self::readJson($path.'/tsconfig.json')) as $hit) {
+            if (SourceFiles::isTemplateFile($hit['file'])) {
+                continue;
+            }
             $name = $hit['package'];
 
             if ($index->npmDeclares($name)) {

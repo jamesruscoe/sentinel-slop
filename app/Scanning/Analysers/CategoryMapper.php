@@ -51,6 +51,12 @@ final class CategoryMapper
             default => FindingCategory::Style,
         };
 
+        // Style rules are Low whatever level the bundled config runs them at: 239 `no-var` hits in a legacy static/js
+        // tree are a formatter's job, not a reason to score a 32k-line application at zero. `eqeqeq` is the same shape.
+        if ($category === FindingCategory::Style || in_array($rule, ['eqeqeq', 'no-var', 'prefer-const', 'no-redeclare'], true)) {
+            $severity = Severity::Low;
+        }
+
         return [$category, $severity];
     }
 
