@@ -266,6 +266,11 @@ return [
     'synthesis' => [
         // Off skips the LLM call entirely (findings and score still complete); used by sentinel:scan-fixture --no-synthesis.
         'enabled' => (bool) env('SENTINEL_SYNTHESIS_ENABLED', true),
+        // Spend guard: at most this many reviews (LLM calls) per UTC day across every user; 0 means no cap. A review
+        // costs about £0.45 on a large repository, so 60 a day is at most £27 whatever the traffic. Past the cap a
+        // scan still completes with findings and score and says the review was not generated. The per-user hourly
+        // rate limit (limits.scans_per_user_per_hour) bounds one user; this bounds the bill.
+        'daily_cap' => (int) env('SENTINEL_SYNTHESIS_DAILY_CAP', 60),
         'provider' => env('SENTINEL_LLM_PROVIDER', 'anthropic'),
         'model' => env('SENTINEL_LLM_MODEL', 'claude-sonnet-5'),
         // Models a user may pick per scan. Comma-separated in SENTINEL_LLM_MODELS; the default model is always allowed.

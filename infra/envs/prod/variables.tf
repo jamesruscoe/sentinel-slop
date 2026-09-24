@@ -112,3 +112,9 @@ variable "scans_per_user_per_hour" {
   type    = number
   default = 5
 }
+
+variable "synthesis_daily_cap" {
+  description = "Reviews (LLM calls) per UTC day across all users; the bill's ceiling at about £0.45 each. 0 disables the cap."
+  type        = number
+  default     = 60
+}

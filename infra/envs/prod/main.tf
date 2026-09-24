@@ -130,6 +130,7 @@ locals {
     SENTINEL_LLM_MODEL               = var.llm_model
     SENTINEL_ADMIN_GITHUB_USERNAMES  = var.admin_github_usernames
     SENTINEL_SCANS_PER_USER_PER_HOUR = tostring(var.scans_per_user_per_hour)
+    SENTINEL_SYNTHESIS_DAILY_CAP     = tostring(var.synthesis_daily_cap)
     SENTINEL_SCAN_WORKERS            = "1"
     SENTINEL_SOLE_WORKER             = "true"
     SENTINEL_SCAN_STORAGE_PATH       = "/tmp/sentinel/scans"

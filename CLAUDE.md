@@ -124,6 +124,8 @@ Line-level analysers cannot see absence or shape: no logging in a whole layer, n
 
 `php artisan sentinel:doctor` checks every binary and prints versions. Windows Defender quarantines textbook webshell text: keep malware fixtures split into small, non-signature-like samples and exclude the repo and `%TEMP%\sentinel-tests` from real-time scanning when running the suite.
 
+**Spend guard.** `synthesis.daily_cap` (default 60, `SENTINEL_SYNTHESIS_DAILY_CAP`, 0 disables) bounds the bill: `SynthesisePrompts` counts scans created today (UTC) with a stored `synthesis_payload` (a stored payload means a call was made, failed or not) and, at the cap, completes the scan with findings and score and a `synthesis_error` saying the daily review allowance is used. The per-user hourly rate limit bounds one user; this bounds everyone. A provider failure mid-scan (an exhausted API balance, a timeout) is the same path: `SynthesisException` is caught in the job, the reason is stored, findings and score stay, nothing is charged for a rejected call, and `LlmSecretScrubber` keeps the key out of the message.
+
 Per-scan LLM model: `scans.llm_model` (validated against `sentinel.synthesis.models`); null means the configured default. `php artisan sentinel:scan owner/name --model=... [--sync]` queues a scan from the CLI; `--sync` runs the whole pipeline in-process with broadcasting off (development only, avoids a stale queue worker).
 
 ### GitHub integration

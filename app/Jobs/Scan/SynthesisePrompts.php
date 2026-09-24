@@ -41,6 +41,18 @@ class SynthesisePrompts extends ScanStageJob
             return;
         }
 
+        // The spend guard: reviews attempted today across every user (a stored payload means a call was made).
+        $cap = (int) config('sentinel.synthesis.daily_cap', 0);
+        if ($cap > 0) {
+            $today = Scan::query()->whereKeyNot($scan->id)->whereNotNull('synthesis_payload')->where('created_at', '>=', now()->startOfDay())->count();
+            if ($today >= $cap) {
+                Log::warning('Daily review allowance reached; scan completes without a review', ['scan' => $scan->uuid, 'cap' => $cap]);
+                $scan->forceFill(['synthesis_error' => "The daily review allowance ({$cap} reviews across all users) has been used. The findings and score are complete; run the scan again tomorrow for the review and prompts."])->save();
+
+                return;
+            }
+        }
+
         $stack = Stack::fromArray($workspace->readArtifact('stack') ?? []);
         $findings = FindingCollection::fromArray(array_values((array) (($workspace->readArtifact('findings-normalised') ?? [])['findings'] ?? [])));
         $score = ScoreResult::fromArray($workspace->readArtifact('score') ?? []);

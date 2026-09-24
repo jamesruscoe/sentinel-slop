@@ -141,6 +141,29 @@ test('the artisan command queues a scan for an installed repository', function (
     expect(Scan::query()->count())->toBe(1);
 });
 
+test('the daily review cap completes the scan without a review once reached', function () {
+    Event::fake([ScanProgressed::class, ScanCompleted::class, ScanFailed::class]);
+    config()->set('sentinel.synthesis.daily_cap', 2);
+    // Two reviews already attempted today (a stored payload means a call was made), one yesterday which does not count.
+    Scan::factory()->for($this->repository)->count(2)->create(['status' => ScanStatus::Complete, 'synthesis_payload' => ['system' => 's', 'user' => 'u', 'model' => 'm']]);
+    $old = Scan::factory()->for($this->repository)->create(['status' => ScanStatus::Complete, 'synthesis_payload' => ['system' => 's', 'user' => 'u', 'model' => 'm']]);
+    Scan::query()->whereKey($old->id)->update(['created_at' => now()->subDays(2)]);
+
+    $scan = app(ScanDispatcher::class)->dispatch($this->repository);
+    $scan->refresh();
+
+    expect($scan->status)->toBe(ScanStatus::Complete)
+        ->and($scan->slop_score)->toBeInt()
+        ->and($scan->prompts()->count())->toBe(0)
+        ->and($scan->synthesis_payload)->toBeNull()
+        ->and($scan->synthesis_error)->toContain('daily review allowance (2 reviews across all users) has been used');
+
+    // Under the cap the same scan gets its review.
+    config()->set('sentinel.synthesis.daily_cap', 3);
+    $next = app(ScanDispatcher::class)->dispatch($this->repository);
+    expect($next->fresh()->prompts()->count())->toBe(8);
+});
+
 test('a failed prompt synthesis keeps the scan results and records the reason', function () {
     Event::fake([ScanProgressed::class, ScanCompleted::class, ScanFailed::class]);
     app()->instance(LlmClient::class, new FakeLlmClient(new SynthesisException('LLM request failed: timeout')));
