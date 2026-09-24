@@ -9,8 +9,8 @@
 #   PHPStan, Pint composer.lock
 #   ESLint, jscpd package-lock.json
 #   Semgrep       SEMGREP_VERSION (pip, hash-checked wheels)
-#   gitleaks      GITLEAKS_VERSION (GitHub release, sha256-verified)
-#   Ruff          RUFF_VERSION (GitHub release, sha256-verified)
+#   gitleaks      GITLEAKS_VERSION (GitHub release, sha256 from docker/checksums.txt)
+#   Ruff          RUFF_VERSION (GitHub release, sha256 from docker/checksums.txt)
 # The last build step runs `php artisan sentinel:doctor --strict`, which fails the
 # build when any tool is missing, unpinned or off its pin, when a required PHP
 # extension is absent, or when memory_limit is below the worker requirement.
@@ -83,18 +83,18 @@ RUN apt-get update \
 RUN pip3 install --no-cache-dir --break-system-packages "semgrep==${SEMGREP_VERSION}" \
     && semgrep --version
 
-# gitleaks and Ruff from their GitHub releases, verified against the published sha256 sums.
+# gitleaks and Ruff from their GitHub releases, verified against sha256 sums committed in docker/checksums.txt
+# (recorded once from the releases and reviewed with the pin bump; a replaced release would no longer match,
+# which fetching the sums alongside the binary could never detect).
+COPY docker/checksums.txt /tmp/checksums.txt
 RUN set -eux; \
     case "${TARGETARCH}" in amd64) GL_ARCH=x64; RUFF_ARCH=x86_64 ;; arm64) GL_ARCH=arm64; RUFF_ARCH=aarch64 ;; *) echo "unsupported arch ${TARGETARCH}" >&2; exit 1 ;; esac; \
     cd /tmp; \
     curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_${GL_ARCH}.tar.gz"; \
-    curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"; \
-    sha256sum --ignore-missing -c "gitleaks_${GITLEAKS_VERSION}_checksums.txt"; \
+    curl -fsSLO "https://github.com/astral-sh/ruff/releases/download/${RUFF_VERSION}/ruff-${RUFF_ARCH}-unknown-linux-gnu.tar.gz"; \
+    sha256sum --ignore-missing --strict -c /tmp/checksums.txt; \
     tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_${GL_ARCH}.tar.gz" gitleaks; \
     install -m 0755 gitleaks /usr/local/bin/gitleaks; \
-    curl -fsSLO "https://github.com/astral-sh/ruff/releases/download/${RUFF_VERSION}/ruff-${RUFF_ARCH}-unknown-linux-gnu.tar.gz"; \
-    curl -fsSLO "https://github.com/astral-sh/ruff/releases/download/${RUFF_VERSION}/ruff-${RUFF_ARCH}-unknown-linux-gnu.tar.gz.sha256"; \
-    sha256sum -c "ruff-${RUFF_ARCH}-unknown-linux-gnu.tar.gz.sha256"; \
     tar -xzf "ruff-${RUFF_ARCH}-unknown-linux-gnu.tar.gz"; \
     install -m 0755 "ruff-${RUFF_ARCH}-unknown-linux-gnu/ruff" /usr/local/bin/ruff; \
     rm -rf /tmp/*; \
