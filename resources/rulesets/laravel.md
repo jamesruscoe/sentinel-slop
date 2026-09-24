@@ -1,6 +1,6 @@
 # Laravel best practices
 
-Read together with php.md.
+Read together with the PHP ruleset.
 
 ## Architecture
 - Controllers are thin: validate (Form Request), call a service or action, return a response. No queries or business rules in controllers, routes, or Blade.

@@ -8,7 +8,7 @@ alwaysApply: true
 
 {!! $rules['summary'] !!}
 
-Stack: {{ $stack->describeFrameworks() ?: ($stack->primaryLanguage() ?? 'unknown') }}{{ $stack->describeRuntimes() !== '' ? ' on '.$stack->describeRuntimes() : '' }}. Rulesets applied: {{ implode(', ', $rulesets) }}.
+Stack: {{ $stack->describeFrameworks() ?: ($stack->primaryLanguage() ?? 'unknown') }}{{ $stack->describeRuntimes() !== '' ? ' on '.$stack->describeRuntimes() : '' }}. Generated from Sentinel Slop's {{ implode(', ', $rulesets) }} rulesets, which are not files in this repository.
 
 @foreach ($rules['sections'] as $section)
 ## {{ $section['heading'] }}

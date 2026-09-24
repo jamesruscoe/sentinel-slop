@@ -82,12 +82,54 @@ final class JscpdAnalyser extends ProcessAnalyser
             $lines = (int) ($duplicate['lines'] ?? 0);
             $line = isset($second['start']) ? (int) $second['start'] : null;
             $file = $relative((string) ($second['name'] ?? ''));
+            $fragment = isset($duplicate['fragment']) ? (string) $duplicate['fragment'] : '';
+            $statements = self::statementsIn($fragment);
 
-            $findings->add(new Finding('jscpd', 'duplicate-block', FindingCategory::Duplication, $lines >= 30 ? Severity::Medium : Severity::Low, $file, $line,
-                sprintf('%d duplicated lines also found in %s:%d.', $lines, $relative((string) ($first['name'] ?? '')), (int) ($first['start'] ?? 0)),
-                isset($duplicate['fragment']) ? implode("\n", array_slice(preg_split('/\r\n|\n/', (string) $duplicate['fragment']) ?: [], 0, 6)) : null));
+            // A block that is mostly declarations, imports, braces and comments (a class skeleton with a one-line
+            // authorize()) is not duplication anyone should extract: a base class would couple unrelated classes.
+            if ($statements < self::MIN_STATEMENTS) {
+                continue;
+            }
+
+            $findings->add(new Finding('jscpd', 'duplicate-block', FindingCategory::Duplication, $lines >= 30 && $statements >= 10 ? Severity::Medium : Severity::Low, $file, $line,
+                sprintf('%d duplicated lines (%d statements) also found in %s:%d.', $lines, $statements, $relative((string) ($first['name'] ?? '')), (int) ($first['start'] ?? 0)),
+                $fragment !== '' ? implode("\n", array_slice(preg_split('/\r\n|\n/', $fragment) ?: [], 0, 6)) : null));
         }
 
         return $findings;
+    }
+
+    /** Fewer meaningful statements than this and a duplicate is boilerplate, not a finding. */
+    public const MIN_STATEMENTS = 4;
+
+    /**
+     * Lines of a fragment that do something: not blank, not a brace or bracket
+     * on its own, not a comment, not an import/use/namespace/declare line, not
+     * a class/function/method declaration or a docblock.
+     */
+    public static function statementsIn(string $fragment): int
+    {
+        $count = 0;
+        foreach (preg_split('/\r\n|\n/', $fragment) ?: [] as $line) {
+            $trimmed = trim($line);
+            if ($trimmed === '' || preg_match('~^(?:[{}()\[\];,]+|<\?php|\?>|</?template>|</?script[^>]*>|</?style[^>]*>)$~', $trimmed) === 1) {
+                continue;
+            }
+            if (preg_match('~^(?://|#|/\*|\*|\*/|<!--)~', $trimmed) === 1) {
+                continue;
+            }
+            if (preg_match('~^(?:use |import |export \{|from |namespace |declare\(|require |require_relative |package |@|abstract |final |readonly )~', $trimmed) === 1) {
+                continue;
+            }
+            if (preg_match('~^(?:(?:public|private|protected|static|async|override|abstract|final|readonly|export|default)\s+)*(?:class|interface|trait|enum|function|def|fn|func|struct)\b~', $trimmed) === 1) {
+                continue;
+            }
+            if (preg_match('~^(?:return new class|(?:public|private|protected)\s+(?:static\s+)?function\s+\w+\s*\([^)]*\)\s*(?::\s*[\w?|\\\\]+)?\s*\{?)$~', $trimmed) === 1) {
+                continue;
+            }
+            $count++;
+        }
+
+        return $count;
     }
 }

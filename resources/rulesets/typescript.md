@@ -1,6 +1,6 @@
 # TypeScript best practices
 
-Read together with javascript.md.
+Read together with the JavaScript ruleset.
 
 ## Types
 - `strict: true` in `tsconfig.json`. Never weaken it to make errors go away.

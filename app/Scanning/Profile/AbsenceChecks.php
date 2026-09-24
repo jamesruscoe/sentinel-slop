@@ -128,6 +128,28 @@ final class AbsenceChecks
                 isset($cluster['snippet']) ? (string) $cluster['snippet'] : null));
         }
 
+        // Reachability: dead files and references to classes that do not exist.
+        $reachability = $profile->section('reachability');
+        $byArea = [];
+        foreach ((array) ($reachability['unreferenced'] ?? []) as $file) {
+            $byArea[(string) $file['area']][] = $file;
+        }
+        foreach ($byArea as $area => $files) {
+            $lines = array_sum(array_column($files, 'code_lines'));
+            $findings->add($this->finding('unreferenced-code', Severity::Medium, $area,
+                sprintf('%d file%s in %s (%s lines) %s imported, mentioned or globbed by nothing in the repository, after excluding framework entry points and auto-discovered kinds: %s. Confirm %s unused and delete %s rather than fixing, logging or testing %s; auto-registration a scanner cannot see (package discovery, auto-imports) is the usual reason a live file looks unreferenced.',
+                    count($files), count($files) === 1 ? '' : 's', $area, number_format($lines), count($files) === 1 ? 'is' : 'are',
+                    implode(', ', array_map(fn (array $f) => $f['path'].' ('.$f['code_lines'].')', array_slice($files, 0, 8))).(count($files) > 8 ? ' (+'.(count($files) - 8).' more)' : ''),
+                    count($files) === 1 ? 'it is' : 'they are', count($files) === 1 ? 'it' : 'them', count($files) === 1 ? 'it' : 'them')));
+        }
+        $unreferencedPaths = array_fill_keys(array_map(fn (array $f) => (string) $f['path'], (array) ($reachability['unreferenced'] ?? [])), true);
+        foreach ((array) ($reachability['missing_own_classes'] ?? []) as $missing) {
+            $dead = isset($unreferencedPaths[$missing['file']]);
+            $findings->add(new Finding(self::TOOL, 'missing-own-class', FindingCategory::Structure, $dead ? Severity::Medium : Severity::High, (string) $missing['file'], null,
+                sprintf('%s references %s, which no file in the repository declares; reaching that code fails at runtime.%s', $missing['file'], $missing['class'],
+                    $dead ? ' The referencing file is itself unreferenced: delete both.' : ' Implement the class or remove the reference.')));
+        }
+
         // Dumping-ground directories.
         foreach ((array) ($cohesion['large_directories'] ?? []) as $dir) {
             if (! $dir['flat'] || $dir['stem_diversity'] < $this->config->dumpingGroundStemDiversity || count($dir['kinds']) < $this->config->minDumpingGroundKinds) {

@@ -111,8 +111,10 @@ final class SemgrepAnalyser extends ProcessAnalyser
             $checkId = (string) ($hit['check_id'] ?? '');
             $checkId = ((int) preg_match('/(sentinel[.].*)$/', $checkId, $m) === 1) ? $m[1] : $checkId;
 
+            // Never use Semgrep's extra.lines as the snippet: without a logged-in account it is the literal
+            // text "requires login", which a reviewer then quoted as if it were the code. We have the file.
             $findings->add(new Finding($this->name(), $checkId, $category, $severity, $relative, $line,
-                trim((string) ($extra['message'] ?? '')), isset($extra['lines']) ? (string) $extra['lines'] : $this->snippetFrom($path, $relative, $line)));
+                trim((string) ($extra['message'] ?? '')), $this->snippetFrom($path, $relative, $line)));
         }
 
         return $findings;

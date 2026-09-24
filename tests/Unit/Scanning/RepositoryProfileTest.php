@@ -54,7 +54,9 @@ test('a well-structured laravel app produces no absence findings', function () {
 test('a framework-less python package with nothing in place produces exactly the expected absence findings', function () {
     [$profile, $findings] = profileFixture('python-service');
 
-    expect(ruleIds($findings))->toBe(['env-read-outside-config', 'no-input-validation', 'no-logging-anywhere', 'no-tests-at-all', 'unguarded-external-calls']);
+    // Handlers, jobs and five repositories are imported by nothing: nothing in the package wires them up (one finding, one area).
+    expect(ruleIds($findings))->toBe(['env-read-outside-config', 'no-input-validation', 'no-logging-anywhere', 'no-tests-at-all', 'unguarded-external-calls', 'unreferenced-code'])
+        ->and(count($profile->section('reachability')['unreferenced']))->toBe(19);
 
     $bySeverity = [];
     foreach ($findings as $finding) {
@@ -189,15 +191,56 @@ test('a flat directory mixing many kinds with unrelated names is a dumping groun
         ->and($dumping->all()[0]->message)->toContain('30 files directly')->toContain('3 kinds');
 });
 
+test('files nothing imports, mentions or globs are unreferenced; framework entry points and page directories are not', function () {
+    $workspace = temporaryWorkspace();
+    $repo = $workspace->repoPath();
+    file_put_contents($repo.'/composer.json', '{"require":{"laravel/framework":"^12.0"},"autoload":{"psr-4":{"App\\\\":"app/"},"files":["app/helpers.php"]}}');
+    foreach (['app/Http/Controllers', 'app/Services', 'bootstrap', 'routes', 'resources/js/pages/Dogs', 'resources/js/services', 'resources/js/Components', 'resources/views/emails'] as $dir) {
+        @mkdir($repo.'/'.$dir, 0777, true);
+    }
+    file_put_contents($repo.'/bootstrap/app.php', "<?php\n\nreturn Application::configure(basePath: dirname(__DIR__))->withRouting(web: __DIR__.'/../routes/web.php')->create();\n");
+    file_put_contents($repo.'/routes/web.php', "<?php\n\nuse App\\Http\\Controllers\\DogController;\n\nRoute::resource('dogs', DogController::class);\n");
+    file_put_contents($repo.'/routes/kennel.php', "<?php\n\nRoute::get('/kennel', fn () => 'never loaded');\n");
+    file_put_contents($repo.'/app/helpers.php', "<?php\n\nfunction kennel_name(): string\n{\n    return 'Kennel';\n}\n");
+    file_put_contents($repo.'/app/Http/Controllers/DogController.php', "<?php\n\nnamespace App\\Http\\Controllers;\n\nuse App\\Services\\DogService;\nuse Inertia\\Inertia;\n\nclass DogController\n{\n    public function index(DogService \$dogs)\n    {\n        return Inertia::render('Dogs/Index', ['dogs' => \$dogs->all()]);\n    }\n}\n");
+    file_put_contents($repo.'/app/Http/Controllers/HandleAccountController.php', "<?php\n\nnamespace App\\Http\\Controllers;\n\nuse App\\Services\\AccountService;\n\nclass HandleAccountController\n{\n    public function __invoke(AccountService \$accounts): void\n    {\n        \$accounts->handle();\n    }\n}\n");
+    file_put_contents($repo.'/app/Services/DogService.php', "<?php\n\nnamespace App\\Services;\n\nclass DogService\n{\n    public function all(): array\n    {\n        return view('emails.welcome') ? [] : [];\n    }\n}\n");
+    file_put_contents($repo.'/resources/views/emails/welcome.blade.php', "<p>Welcome</p>\n");
+    file_put_contents($repo.'/resources/js/app.ts', "import { createInertiaApp } from '@inertiajs/vue3'\nconst pages = import.meta.glob('./pages/**/*.vue')\ncreateInertiaApp({ resolve: (name) => pages[`./pages/\${name}.vue`] })\n");
+    file_put_contents($repo.'/resources/js/pages/Dogs/Index.vue', "<script setup lang=\"ts\">\nimport { fetchDogs } from '@/services/DogApi'\nimport Card from '@/Components/Card.vue'\n</script>\n<template><Card /></template>\n");
+    file_put_contents($repo.'/resources/js/pages/Orphan.vue', "<template><div>nobody renders me, but pages are globbed</div></template>\n");
+    file_put_contents($repo.'/resources/js/services/DogApi.ts', "export const fetchDogs = () => fetch('/api/dogs')\n");
+    file_put_contents($repo.'/resources/js/services/NotificationApiService.ts', "export const fetchNotifications = () => fetch('/api/notifications')\n");
+    file_put_contents($repo.'/resources/js/Components/Card.vue', "<template><div class=\"card\"><slot /></div></template>\n");
+    file_put_contents($repo.'/resources/js/Components/Unused.vue', "<template><div>unused</div></template>\n");
+
+    [$profile, $findings] = profileDirectory($repo, ['laravel']);
+    $unreferenced = array_map(fn (array $f) => $f['path'], $profile->section('reachability')['unreferenced']);
+    sort($unreferenced);
+    $byRule = [];
+    foreach ($findings as $finding) {
+        $byRule[(string) $finding->ruleId][] = $finding;
+    }
+
+    expect($unreferenced)->toBe(['app/Http/Controllers/HandleAccountController.php', 'resources/js/Components/Unused.vue', 'resources/js/services/NotificationApiService.ts', 'routes/kennel.php'])
+        ->and($profile->section('reachability')['missing_own_classes'])->toBe([['file' => 'app/Http/Controllers/HandleAccountController.php', 'class' => 'App\Services\AccountService']])
+        ->and(array_map(fn (Finding $f) => $f->filePath, $byRule['unreferenced-code']))->toBe(['app/Http/Controllers', 'resources/js/Components', 'resources/js/services', 'routes'])
+        ->and($byRule['missing-own-class'][0]->severity)->toBe(Severity::Medium)
+        ->and($byRule['missing-own-class'][0]->message)->toContain('App\Services\AccountService', 'delete both');
+});
+
 test('no absence finding fires below its minimum population', function () {
     $workspace = temporaryWorkspace();
     $repo = $workspace->repoPath();
     @mkdir($repo.'/app/Services', 0777, true);
     @mkdir($repo.'/app/Http/Controllers', 0777, true);
+    @mkdir($repo.'/routes', 0777, true);
+    file_put_contents($repo.'/composer.json', '{"autoload":{"psr-4":{"App\\\\":"app/"}}}');
     for ($i = 1; $i <= 3; $i++) {
         file_put_contents($repo."/app/Services/Thing{$i}Service.php", "<?php\n\nnamespace App\\Services;\n\nfinal class Thing{$i}Service\n{\n    public function run(): int\n    {\n        return getenv('THING') ? 1 : 0;\n    }\n}\n");
     }
-    file_put_contents($repo.'/app/Http/Controllers/ThingController.php', "<?php\n\nnamespace App\\Http\\Controllers;\n\nfinal class ThingController\n{\n    public function store(\$request): void\n    {\n        \$request->input('name');\n    }\n}\n");
+    file_put_contents($repo.'/app/Http/Controllers/ThingController.php', "<?php\n\nnamespace App\\Http\\Controllers;\n\nuse App\\Services\\Thing1Service;\nuse App\\Services\\Thing2Service;\nuse App\\Services\\Thing3Service;\n\nfinal class ThingController\n{\n    public function store(\$request, Thing1Service \$a, Thing2Service \$b, Thing3Service \$c): void\n    {\n        \$request->input('name');\n    }\n}\n");
+    file_put_contents($repo.'/routes/web.php', "<?php\n\nuse App\\Http\\Controllers\\ThingController;\n\nRoute::post('/things', ThingController::class);\n");
 
     [, $findings] = profileDirectory($repo, ['laravel']);
 

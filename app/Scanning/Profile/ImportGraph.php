@@ -19,15 +19,31 @@ final class ImportGraph
      * @param  array<string, list<string>>  $edges  importer path => imported paths
      * @param  array<string, list<string>>  $reverse  imported path => importer paths
      * @param  array<string, string>  $psr4  namespace prefix (trailing backslash) => directory (trailing slash), own code only
+     * @param  list<string>  $globbed  directory prefixes referenced by a glob (import.meta.glob), whose files count as referenced
      */
     private function __construct(
         public readonly array $edges,
         public readonly array $reverse,
         public readonly array $psr4,
+        public readonly array $globbed = [],
     ) {}
 
     /**
-     * @param  list<array{path: string, family: string|null, imports: list<string>}>  $files
+     * Whether some file references this path through a glob pattern over its directory.
+     */
+    public function isGlobbed(string $path): bool
+    {
+        foreach ($this->globbed as $prefix) {
+            if (str_starts_with($path, $prefix)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  list<array{path: string, family: string|null, imports: list<string>, mentions?: list<string>}>  $files
      */
     public static function build(string $repoPath, array $files): self
     {
@@ -38,26 +54,45 @@ final class ImportGraph
 
         $psr4 = self::ownPsr4($repoPath);
         $aliases = self::jsAliases($repoPath, $exists);
+        $pageRoots = self::pageRoots($exists);
         $edges = [];
         $reverse = [];
+        $globbed = [];
 
         foreach ($files as $file) {
-            if ($file['family'] === null) {
-                continue;
-            }
-
             $targets = [];
-            foreach ($file['imports'] as $import) {
-                $target = match ($file['family']) {
-                    'php' => self::resolvePhp($import, $psr4, $exists),
-                    'js' => self::resolveJs($import, $file['path'], $aliases, $exists),
-                    'python' => self::resolvePython($import, $file['path'], $exists),
-                    'ruby' => self::resolveRuby($import, $file['path'], $exists),
-                    default => null,
-                };
+            if ($file['family'] !== null) {
+                foreach ($file['imports'] as $import) {
+                    $target = match ($file['family']) {
+                        'php' => self::resolvePhp($import, $psr4, $exists),
+                        'js' => self::resolveJs($import, $file['path'], $aliases, $exists),
+                        'python' => self::resolvePython($import, $file['path'], $exists),
+                        'ruby' => self::resolveRuby($import, $file['path'], $exists),
+                        default => null,
+                    };
+                    if ($target !== null && $target !== $file['path']) {
+                        $targets[$target] = true;
+                    }
+                }
+            }
+            // String mentions: routes/kennel.php in bootstrap/app.php, 'Staff/Dogs/Index' in Inertia::render(),
+            // 'emails.booking' in view(), app/helpers.php in composer.json, resources/js/app.ts in @vite().
+            foreach ($file['mentions'] ?? [] as $mention) {
+                if (str_starts_with($mention, 'glob:')) {
+                    $prefix = self::globPrefix(substr($mention, 5), $file['path'], $aliases);
+                    if ($prefix !== null) {
+                        $globbed[$prefix] = true;
+                    }
+
+                    continue;
+                }
+                $target = self::resolveMention($mention, $exists, $pageRoots);
                 if ($target !== null && $target !== $file['path']) {
                     $targets[$target] = true;
                 }
+            }
+            if ($targets === [] && $file['family'] === null) {
+                continue;
             }
 
             $edges[$file['path']] = array_keys($targets);
@@ -66,7 +101,34 @@ final class ImportGraph
             }
         }
 
-        return new self($edges, $reverse, $psr4);
+        return new self($edges, $reverse, $psr4, array_keys($globbed));
+    }
+
+    /**
+     * The directory a glob pattern covers, resolved like a relative or aliased import.
+     *
+     * @param  array<string, string>  $aliases
+     */
+    private static function globPrefix(string $glob, string $importer, array $aliases): ?string
+    {
+        $base = explode('*', $glob)[0];
+        $base = preg_replace('~[^/]*$~', '', $base) ?? $base;
+        if ($base === '') {
+            return null;
+        }
+        if (str_starts_with($base, './') || str_starts_with($base, '../')) {
+            return rtrim(self::normalise(dirname($importer).'/'.$base), '/').'/';
+        }
+        foreach ($aliases as $prefix => $dir) {
+            if (str_starts_with($base, $prefix)) {
+                return rtrim(self::normalise($dir.substr($base, strlen($prefix))), '/').'/';
+            }
+        }
+        if (str_starts_with($base, '/')) {
+            return rtrim(self::normalise($base), '/').'/';
+        }
+
+        return rtrim(self::normalise($base), '/').'/';
     }
 
     /**
@@ -116,6 +178,21 @@ final class ImportGraph
     public function resolvePhpName(string $fqcn): ?string
     {
         return self::resolvePhp($fqcn, $this->psr4, array_fill_keys(array_keys($this->edges), true));
+    }
+
+    /**
+     * Whether a fully qualified PHP name falls under one of the repository's own autoload prefixes.
+     */
+    public function isOwnPhpName(string $fqcn): bool
+    {
+        $fqcn = ltrim($fqcn, chr(92));
+        foreach (array_keys($this->psr4) as $prefix) {
+            if (str_starts_with($fqcn, $prefix)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -277,6 +354,61 @@ final class ImportGraph
         foreach ([$candidate, $candidate.'.rb', 'lib/'.$required.'.rb', 'app/'.$required.'.rb'] as $path) {
             if (isset($exists[$path])) {
                 return $path;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Directories whose files are addressed by name from elsewhere (Inertia pages, Blade views).
+     *
+     * @param  array<string, true>  $exists
+     * @return list<string> directory prefixes with trailing slash
+     */
+    private static function pageRoots(array $exists): array
+    {
+        $roots = [];
+        foreach (['resources/js/pages/', 'resources/js/Pages/', 'resources/ts/pages/', 'resources/ts/Pages/', 'src/pages/', 'src/Pages/', 'resources/views/'] as $root) {
+            foreach (array_keys($exists) as $path) {
+                if (str_starts_with($path, $root)) {
+                    $roots[] = $root;
+
+                    break;
+                }
+            }
+        }
+
+        return $roots;
+    }
+
+    /**
+     * @param  array<string, true>  $exists
+     * @param  list<string>  $pageRoots
+     */
+    private static function resolveMention(string $mention, array $exists, array $pageRoots): ?string
+    {
+        $clean = self::normalise(preg_replace('~^(?:\./|\.\./)+~', '', ltrim($mention, '/')) ?? $mention);
+        if ($clean === '') {
+            return null;
+        }
+
+        $candidates = [$clean];
+        if (! str_contains($clean, '.') || ! preg_match('/\.[a-z]{1,5}$/i', $clean)) {
+            foreach (['php', 'js', 'ts', 'vue', 'tsx', 'jsx', 'py', 'rb'] as $ext) {
+                $candidates[] = $clean.'.'.$ext;
+            }
+        }
+        foreach ($pageRoots as $root) {
+            $name = str_ends_with($root, 'views/') ? str_replace('.', '/', $clean) : $clean;
+            foreach (['vue', 'tsx', 'jsx', 'ts', 'js', 'svelte', 'blade.php'] as $ext) {
+                $candidates[] = $root.$name.'.'.$ext;
+            }
+        }
+
+        foreach ($candidates as $candidate) {
+            if (isset($exists[$candidate])) {
+                return $candidate;
             }
         }
 

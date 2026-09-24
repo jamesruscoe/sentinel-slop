@@ -57,6 +57,18 @@ test('jscpd compares Vue single-file components whole, so page-level duplication
         ->and($findings->all()[0]->filePath)->not->toContain(':');
 });
 
+test('a duplicated class skeleton with one real statement is boilerplate, not a duplication finding', function () {
+    $workspace = temporaryWorkspace();
+    @mkdir($workspace->repoPath().'/app/Http/Requests', 0777, true);
+    foreach (['StoreDog', 'UpdateDog', 'StoreOwner'] as $name) {
+        file_put_contents($workspace->repoPath()."/app/Http/Requests/{$name}Request.php", "<?php\n\nnamespace App\\Http\\Requests;\n\nuse Illuminate\\Foundation\\Http\\FormRequest;\n\nclass {$name}Request extends FormRequest\n{\n    /**\n     * Determine if the user is authorised.\n     */\n    public function authorize(): bool\n    {\n        return \$this->user() !== null;\n    }\n\n    public function rules(): array\n    {\n        return ['{$name}' => ['required']];\n    }\n}\n");
+    }
+
+    expect(app(JscpdAnalyser::class)->run($workspace->repoPath()))->toHaveCount(0)
+        ->and(JscpdAnalyser::statementsIn("<?php\nnamespace A;\nuse B;\nclass C extends D\n{\n    public function authorize(): bool\n    {\n        return \$this->user() !== null;\n    }\n}\n"))->toBe(1)
+        ->and(JscpdAnalyser::statementsIn("\$a = 1;\n\$b = \$a + 2;\nif (\$b > 2) {\n    return \$b;\n}\nreturn null;\n"))->toBe(5);
+});
+
 test('jscpd does not report the skeleton header every migration shares', function () {
     $workspace = temporaryWorkspace();
     @mkdir($workspace->repoPath().'/database/migrations', 0777, true);

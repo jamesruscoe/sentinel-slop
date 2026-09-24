@@ -15,7 +15,7 @@ use App\Scanning\Detect\DependencyIndex;
  *
  * @phpstan-import-type FileFact from SourceInventory
  *
- * @phpstan-type Manifests array{composer: array<string, true>, composer_dev: array<string, true>, composer_all: array<string, true>, npm: array<string, true>, npm_dev: array<string, true>, npm_all: array<string, true>, python: list<string>}
+ * @phpstan-type Manifests array{composer: array<string, true>, composer_dev: array<string, true>, composer_all: array<string, true>, composer_files: list<string>, npm: array<string, true>, npm_dev: array<string, true>, npm_all: array<string, true>, python: list<string>}
  */
 final class RepositoryProfiler
 {
@@ -31,9 +31,10 @@ final class RepositoryProfiler
         $inventory = SourceInventory::build($repoPath);
         $all = $inventory->files;
         $source = $inventory->source();
-        $graph = ImportGraph::build($repoPath, $source);
+        $graph = ImportGraph::build($repoPath, $all);
         $index = DependencyIndex::build($repoPath);
         $manifests = $this->manifests($repoPath);
+        $reachability = $this->reachability($all, $graph, $manifests);
 
         $logging = $this->logging($source, $graph, $manifests);
         $validation = $this->validation($source, $graph, $manifests);
@@ -63,6 +64,7 @@ final class RepositoryProfiler
             'dependencies' => $dependencies,
             'cohesion' => $cohesion,
             'documentation' => $documentation,
+            'reachability' => $reachability,
         ];
         $data['observations'] = $this->observations($data);
 
@@ -724,7 +726,7 @@ final class RepositoryProfiler
         $pairs = [];
         $totalLines = 0;
         foreach ($jscpd as $finding) {
-            if ($finding->ruleId !== 'duplicate-block' || preg_match('/^(\d+) duplicated lines also found in (.+):(\d+)\.$/', $finding->message, $m) !== 1) {
+            if ($finding->ruleId !== 'duplicate-block' || preg_match('/^(\d+) duplicated lines(?: \(\d+ statements\))? also found in (.+):(\d+)\.$/', $finding->message, $m) !== 1) {
                 continue;
             }
             $here = $finding->filePath.':'.($finding->line ?? 0);
@@ -789,6 +791,84 @@ final class RepositoryProfiler
             'pairs' => count($pairs),
             'total_duplicated_lines' => $totalLines,
             'superseded_pairs' => array_values(array_unique($superseded)),
+        ];
+    }
+
+    /** Kinds the framework finds by convention or that are addressed from outside the code: never "unreferenced". */
+    private const REACHABILITY_EXEMPT_KINDS = ['config', 'migration', 'seeder', 'factory', 'command', 'provider', 'test', 'policy', 'listener', 'observer', 'page', 'view', 'asset', 'doc', 'infra', 'script', 'type', 'schema'];
+
+    private const REACHABILITY_EXEMPT_PATHS = ['bootstrap/', 'public/', 'database/', 'tests/', 'app/Console/', 'app/Providers/', 'app/Livewire/', 'app/View/', 'app/Filament/', 'app/Nova/', 'app/Exceptions/', '.github/', 'docker/', 'terraform/', 'scripts/', 'bin/'];
+
+    /** Basenames that are entry points a framework, runtime or bundler loads by name. */
+    private const ENTRY_NAMES = ['app', 'main', 'index', 'ssr', 'bootstrap', 'echo', 'setup', 'entry', 'server', 'client', 'cli', 'artisan', 'manage', 'wsgi', 'asgi', 'settings', 'urls', 'admin', 'apps', 'tasks', 'signals', 'conftest', '__init__', '__main__', 'celery', 'kernel', 'handler', 'lambda_function', 'vite-env', 'env', 'page', 'layout', 'route', 'loading', 'error', 'not-found', 'template', 'middleware', 'application', 'environment', 'boot', 'seeds', 'web', 'api', 'console', 'channels', 'preload', 'renderer'];
+
+    /**
+     * Files nothing imports, mentions or globs, after removing what a framework
+     * loads by convention. A route file other than the four Laravel defaults is
+     * only referenced if something mentions it (bootstrap/app.php, a provider).
+     * Also: references to classes under the repository's own namespaces that
+     * no file declares, which fail at runtime when reached.
+     *
+     * @param  list<FileFact>  $all
+     * @param  Manifests  $manifests
+     * @return array<string, mixed>
+     */
+    private function reachability(array $all, ImportGraph $graph, array $manifests): array
+    {
+        $declared = [];
+        $supported = 0;
+        foreach ($all as $file) {
+            foreach ($file['declares'] as $fqcn) {
+                $declared[strtolower($fqcn)] = true;
+            }
+        }
+        $autoloadFiles = array_fill_keys(array_map(fn (string $f) => ltrim(str_replace(chr(92), '/', $f), './'), $manifests['composer_files']), true);
+
+        $unreferenced = [];
+        $missing = [];
+        foreach ($all as $file) {
+            if (! in_array($file['family'], ['php', 'js', 'python', 'ruby'], true) || $file['is_test']) {
+                continue;
+            }
+            $supported++;
+
+            if ($file['family'] === 'php') {
+                foreach ($file['references'] as $reference) {
+                    if ($graph->isOwnPhpName($reference) && ! isset($declared[strtolower(ltrim($reference, chr(92)))])) {
+                        $missing[] = ['file' => $file['path'], 'class' => ltrim($reference, chr(92))];
+                    }
+                }
+            }
+
+            $base = strtolower(Naming::baseName($file['path']));
+            $isRouteFile = $file['kind'] === 'route';
+            if ($isRouteFile && ! in_array($base, ['web', 'api', 'console', 'channels'], true)) {
+                // A custom route file is reachable only when something loads it.
+            } elseif (in_array($file['kind'], self::REACHABILITY_EXEMPT_KINDS, true) || $isRouteFile || $file['area'] === '(root)' || in_array($base, self::ENTRY_NAMES, true) || $file['is_config_path']) {
+                continue;
+            }
+            foreach (self::REACHABILITY_EXEMPT_PATHS as $prefix) {
+                if (str_starts_with($file['path'], $prefix)) {
+                    continue 2;
+                }
+            }
+            if ($file['family'] === 'php' && $file['declares'] === [] && ! $isRouteFile) {
+                continue; // procedural file: nothing to reference it by name
+            }
+            if (isset($autoloadFiles[$file['path']]) || $graph->importedBy($file['path']) !== [] || $graph->isGlobbed($file['path'])) {
+                continue;
+            }
+
+            $unreferenced[] = ['path' => $file['path'], 'area' => $file['area'], 'kind' => $file['kind'], 'code_lines' => $file['code_lines']];
+        }
+        usort($unreferenced, fn (array $a, array $b) => [$a['area'], $b['code_lines']] <=> [$b['area'], $a['code_lines']]);
+
+        return [
+            'graph_families' => ['php', 'js', 'python', 'ruby'],
+            'supported_files' => $supported,
+            'unreferenced' => $unreferenced,
+            'unreferenced_lines' => array_sum(array_column($unreferenced, 'code_lines')),
+            'missing_own_classes' => $missing,
         ];
     }
 
@@ -1050,6 +1130,14 @@ final class RepositoryProfiler
         foreach ($data['cohesion']['large_directories'] as $dir) {
             $out[] = sprintf('%s holds %d files directly (%s, stem diversity %.2f): %s.', $dir['directory'], $dir['files'], $dir['flat'] ? 'flat' : 'with subdirectories', $dir['stem_diversity'], implode(', ', array_map(fn ($k, $v) => "$v $k", array_keys($dir['kinds']), $dir['kinds'])));
         }
+        $reach = $data['reachability'];
+        if ($reach['unreferenced'] !== []) {
+            $out[] = sprintf('%d files (%s lines) are imported, mentioned or globbed by nothing in the repository, after excluding framework entry points and auto-discovered kinds: %s. Treat them as dead unless proven otherwise: auto-registration a scanner cannot see is the usual reason a live file looks unreferenced.',
+                count($reach['unreferenced']), number_format((int) $reach['unreferenced_lines']), implode(', ', array_map(fn (array $u) => $u['path'], array_slice($reach['unreferenced'], 0, 10))).(count($reach['unreferenced']) > 10 ? ' (+'.(count($reach['unreferenced']) - 10).' more)' : ''));
+        }
+        if ($reach['missing_own_classes'] !== []) {
+            $out[] = 'References to classes under the repository\'s own namespaces that no file declares: '.implode(', ', array_map(fn (array $m) => $m['class'].' (from '.$m['file'].')', array_slice($reach['missing_own_classes'], 0, 8))).'.';
+        }
         if ($data['documentation']['sparse_areas'] !== []) {
             $out[] = 'Comment density under 2% in: '.implode(', ', $data['documentation']['sparse_areas']).'.';
         }
@@ -1084,10 +1172,18 @@ final class RepositoryProfiler
         $npm = array_fill_keys(array_map('strval', array_keys((array) ($package['dependencies'] ?? []))), true);
         $npmDev = array_fill_keys(array_map('strval', array_keys((array) ($package['devDependencies'] ?? []))), true);
 
+        $composerFiles = [];
+        foreach (['autoload', 'autoload-dev'] as $section) {
+            foreach ((array) (($composer[$section] ?? [])['files'] ?? []) as $file) {
+                $composerFiles[] = (string) $file;
+            }
+        }
+
         return [
             'composer' => array_diff_key($composerRequire, ['php' => true]),
             'composer_dev' => $composerDev,
             'composer_all' => $composerRequire + $composerDev,
+            'composer_files' => $composerFiles,
             'npm' => $npm,
             'npm_dev' => $npmDev,
             'npm_all' => $npm + $npmDev,

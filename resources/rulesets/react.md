@@ -1,6 +1,6 @@
 # React best practices
 
-Read together with typescript.md or javascript.md. Applies to React, Next.js and Remix.
+Read together with the TypeScript or JavaScript ruleset. Applies to React, Next.js and Remix.
 
 ## Components
 - Function components and hooks only. One component per file, named after the file, props typed with an explicit `Props` type.

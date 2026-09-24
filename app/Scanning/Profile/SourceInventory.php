@@ -23,7 +23,7 @@ use PhpParser\NodeVisitor\NameResolver;
  * @phpstan-type FileFact array{
  *   path: string, family: string|null, area: string, kind: string, stem: string|null, is_test: bool, is_config_path: bool,
  *   lines: int, code_lines: int, comment_lines: int, depth: int,
- *   references: list<string>, imports: list<string>, declares: list<string>,
+ *   references: list<string>, imports: list<string>, declares: list<string>, mentions: list<string>,
  *   signals: array<string, int>,
  *   functions: list<array{name: string, line: int, length: int}>
  * }
@@ -84,6 +84,7 @@ final class SourceInventory
             'references' => [],
             'imports' => [],
             'declares' => [],
+            'mentions' => [],
             'signals' => array_fill_keys(self::SIGNALS, 0),
             'functions' => [],
         ];
@@ -122,6 +123,8 @@ final class SourceInventory
             }
             $fact['code_lines']++;
         }
+
+        $fact['mentions'] = self::mentionsIn($contents);
 
         if ($family === null) {
             return $fact;
@@ -177,6 +180,43 @@ final class SourceInventory
         foreach ([...PhpSource::find($resolved, ClassMethod::class), ...PhpSource::find($resolved, Function_::class)] as $function) {
             $fact['functions'][] = ['name' => $function->name->toString(), 'line' => $function->getStartLine(), 'length' => $function->getEndLine() - $function->getStartLine() + 1];
         }
+    }
+
+    /**
+     * Quoted strings that may name another repository file: a route file in
+     * bootstrap/app.php, an Inertia page in a controller, a Blade view, a
+     * composer autoload file, a Vite input. ImportGraph resolves them; only
+     * those that resolve become edges.
+     *
+     * @return list<string>
+     */
+    private static function mentionsIn(string $contents): array
+    {
+        if (preg_match_all('~[\'"]([A-Za-z0-9_@][A-Za-z0-9_.\-/]{2,200})[\'"]~', $contents, $m) === 0) {
+            return [];
+        }
+
+        $mentions = [];
+        // Glob patterns (import.meta.glob('./pages/**/*.vue'), require.context) reference whole directories.
+        if (preg_match_all('%[\'"]((?:\./|\.\./|@/|~/|/)?[A-Za-z0-9_.\-/]*\*[A-Za-z0-9_.\-/*{},]*)[\'"]%', $contents, $g) > 0) {
+            foreach ($g[1] as $glob) {
+                $mentions['glob:'.$glob] = true;
+            }
+        }
+        foreach ($m[1] as $candidate) {
+            if (! str_contains($candidate, '/') && ! str_contains($candidate, '.')) {
+                continue;
+            }
+            if (str_starts_with($candidate, 'http') || str_contains($candidate, '//') || preg_match('/^[\d.]+$/', $candidate) === 1) {
+                continue;
+            }
+            $mentions[$candidate] = true;
+            if (count($mentions) >= 300) {
+                break;
+            }
+        }
+
+        return array_keys($mentions);
     }
 
     /**

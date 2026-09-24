@@ -6,6 +6,7 @@ use App\Scanning\Data\FindingCollection;
 use App\Scanning\Data\Stack;
 use App\Scanning\Enums\TargetEditor;
 use App\Scanning\Exceptions\SynthesisException;
+use App\Scanning\Profile\RepositoryProfile;
 use App\Scanning\Profile\RepositoryProfiler;
 use App\Scanning\Score\ScoreResult;
 use App\Scanning\Synthesis\PromptSynthesiser;
@@ -41,7 +42,7 @@ test('the synthesiser sends stack, score, rulesets and redacted findings and ren
 
     expect($llm->calls)->toHaveCount(1)
         ->and($llm->calls[0]['model'])->toBe('claude-sonnet-5')
-        ->and($llm->calls[0]['system'])->toContain('## Ruleset: laravel', 'strict_types', 'reviewing a codebase for maintainability', 'between 3 and 6 phases', 'Never present conventional structure', '1. Correctness', '2. Observability', '3. Structure and duplication', '4. Style, types and dependency declarations')
+        ->and($llm->calls[0]['system'])->toContain('## Sentinel Slop ruleset: Laravel (not a file in the repository)', 'strict_types', 'never cite one by name', 'reviewing a codebase for maintainability', 'between 3 and 6 phases', 'Never present conventional structure', '1. Correctness', '2. Observability', '3. Structure and duplication', '4. Style, types and dependency declarations')
         ->and($llm->calls[0]['system'])->toContain('Never infer, guess or invent a class, method, function, variable or route name')
         ->and($llm->calls[0]['user'])->toContain('acme/app', 'Slop score: 61/100', 'PHP (90%)', 'laravel 12', 'Runtimes declared: PHP 8.3', 'config/x.php:9', 'app/A.php:3 in App\A::total()', 'return "0";', 'Inline suppression comments: 3');
 
@@ -62,7 +63,7 @@ test('the synthesiser sends stack, score, rulesets and redacted findings and ren
         ->and($result->phases[0]['addresses'])->toBe(['problem 1'])
         ->and($llm->calls[0]['user'])->not->toContain('## Repository profile')
         ->and($result->rulesFileFor(TargetEditor::ClaudeCode))->toMatchArray(['filename' => 'CLAUDE.md'])
-        ->and($result->rulesFileFor(TargetEditor::ClaudeCode)['body'])->toContain('# acme/app conventions', 'Keep it tidy & typed.', '## Errors', '- Never swallow exceptions', 'Stack: laravel 12 on PHP 8.3. Rulesets applied: php, laravel')
+        ->and($result->rulesFileFor(TargetEditor::ClaudeCode)['body'])->toContain('# acme/app conventions', 'Keep it tidy & typed.', '## Errors', '- Never swallow exceptions', "Stack: laravel 12 on PHP 8.3. Generated from Sentinel Slop's php, laravel, javascript rulesets, which are not files in this repository.")
         ->and($result->payload['usage'])->toMatchArray(['finish_reason' => 'stop', 'output_tokens' => 900])
         ->and($result->rulesFileFor(TargetEditor::Cursor)['filename'])->toBe('.cursor/rules/sentinel-slop.mdc')
         ->and($result->rulesFileFor(TargetEditor::Cursor)['body'])->toStartWith("---\ndescription: acme/app conventions")
@@ -82,6 +83,20 @@ test('the repository profile is sent ahead of the findings when the scan has one
     expect($user)->toContain('## Repository profile', 'AREAS', 'app/Services', 'OBSERVATIONS', '## Findings')
         ->and(strpos($user, '## Repository profile'))->toBeLessThan(strpos($user, '## Findings'))
         ->and($result->budget['profile_tokens'])->toBeGreaterThan(200);
+});
+
+test('findings inside files the profile reports as unreferenced are marked before the model sees them', function () {
+    $llm = new FakeLlmClient(FakeLlmClient::samplePlan());
+    $synthesiser = new PromptSynthesiser($llm, app(TemplateRenderer::class), new SynthesisPayloadBuilder);
+    $profile = new RepositoryProfile(['reachability' => ['supported_files' => 2, 'unreferenced' => [['path' => 'app/A.php', 'area' => 'app', 'kind' => 'code', 'code_lines' => 10]], 'unreferenced_lines' => 10, 'missing_own_classes' => []]]);
+    $request = synthesisRequest();
+
+    $synthesiser->synthesise(new SynthesisRequest($request->repositoryName, $request->stack, $request->score, $request->findings, $request->rulesets, $request->editors, $request->model, $request->suppressions, $profile));
+
+    $user = $llm->calls[0]['user'];
+    expect($user)->toContain('[in an unreferenced file: nothing imports or mentions it; confirm and delete instead of fixing] bad return')
+        ->and($user)->toContain('UNREFERENCED app/A.php')
+        ->and($user)->not->toContain('unreferenced file: nothing imports or mentions it; confirm and delete instead of fixing] Possible secret');
 });
 
 test('a plan with too few phases, too many phases or duplicate titles is rejected rather than stored', function () {

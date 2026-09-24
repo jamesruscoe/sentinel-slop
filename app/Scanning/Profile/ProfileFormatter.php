@@ -95,6 +95,20 @@ final class ProfileFormatter
         $lines[] = '  Grab-bag helper files: '.(implode(', ', array_map(fn ($x) => $x['path'].' ('.$x['code_lines'].')', (array) ($coh['grab_bag_files'] ?? []))) ?: 'none');
         $lines[] = '';
 
+        $r = $d['reachability'] ?? [];
+        $unref = (array) ($r['unreferenced'] ?? []);
+        $lines[] = sprintf('REACHABILITY (import graph plus string mentions and globs; framework entry points and auto-discovered kinds excluded): %d of %d files are referenced by nothing (%s lines).', count($unref), $r['supported_files'] ?? 0, number_format((int) ($r['unreferenced_lines'] ?? 0)));
+        foreach (array_slice($unref, 0, 15) as $u) {
+            $lines[] = sprintf('  UNREFERENCED %s (%s, %d lines)', $u['path'], $u['kind'], $u['code_lines']);
+        }
+        if (count($unref) > 15) {
+            $lines[] = sprintf('  (+%d more)', count($unref) - 15);
+        }
+        foreach ((array) ($r['missing_own_classes'] ?? []) as $m) {
+            $lines[] = sprintf('  MISSING CLASS %s referenced from %s is declared nowhere in the repository', $m['class'], $m['file']);
+        }
+        $lines[] = '';
+
         $doc = $d['documentation'] ?? [];
         $lines[] = sprintf('DOCUMENTATION: README %s, docs/ %s, sparse areas (<2%% comments): %s.', ($doc['readme'] ?? false) ? 'present' : 'missing', ($doc['docs_directory'] ?? false) ? 'present' : 'absent', implode(', ', (array) ($doc['sparse_areas'] ?? [])) ?: 'none');
         $lines[] = '';
