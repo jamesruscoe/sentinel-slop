@@ -20,6 +20,15 @@ resource "aws_lb_target_group" "web" {
 
   deregistration_delay = 30
 
+  # During a rolling deploy two web tasks answer for a minute or two, each with its own Vite build. A page
+  # served by the new task names asset files the old task does not have (an HTML 404 refused as "text/html"),
+  # so a browser sticks to one task for an hour; long enough to outlast any overlap, short enough to matter to nobody.
+  stickiness {
+    type            = "lb_cookie"
+    cookie_duration = 3600
+    enabled         = true
+  }
+
   health_check {
     path                = "/up"
     matcher             = "200"
