@@ -77,6 +77,9 @@ class ScanFixtureCommand extends Command
         $usage = $scan->synthesis_payload['usage'] ?? null;
         if (is_array($usage)) {
             $this->line(sprintf('LLM usage: %d input tokens, %d output tokens, finish reason %s', $usage['input_tokens'], $usage['output_tokens'], $usage['finish_reason']));
+            foreach ((array) ($scan->synthesis_payload['calls'] ?? []) as $call) {
+                $this->line(sprintf('  %-10s %6d in, %6d out', $call['stage'], $call['input_tokens'], $call['output_tokens']));
+            }
         }
 
         if ($scan->status !== ScanStatus::Complete) {

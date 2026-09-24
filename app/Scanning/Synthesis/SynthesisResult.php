@@ -17,8 +17,8 @@ final class SynthesisResult
      * @param  list<Phase>  $phases  Editor-neutral plan from the LLM, three to six phases ordered by impact.
      * @param  array<string, list<array{phase: int, title: string, body: string}>>  $prompts  editor value => rendered prompts
      * @param  array<string, array{filename: string, body: string}>  $rulesFiles  editor value => rendered rules file
-     * @param  array{included: int, omitted: int, aggregated: int, estimated_tokens: int, profile_tokens: int}  $budget
-     * @param  array{system: string, user: string, model: string, usage?: array{finish_reason: string, input_tokens: int, output_tokens: int}}  $payload  Exactly what was sent to the LLM, plus usage.
+     * @param  array{included: int, omitted: int, aggregated: int, estimated_tokens: int, profile_tokens: int, calls: int}  $budget
+     * @param  array{system: string, user: string, model: string, usage?: array{finish_reason: string, input_tokens: int, output_tokens: int}, calls?: list<array{stage: string, finish_reason: string, input_tokens: int, output_tokens: int}>, phase_prompts?: array<int, string>}  $payload  Exactly what was sent to the LLM (the review prompts, then each phase's user prompt), plus usage per call and in total.
      */
     public function __construct(
         public readonly array $assessment,

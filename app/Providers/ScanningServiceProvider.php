@@ -89,8 +89,9 @@ class ScanningServiceProvider extends ServiceProvider
     {
         $this->app->bind(LlmClient::class, fn (): LlmClient => new PrismLlmClient(
             (string) config('sentinel.synthesis.provider', 'anthropic'),
-            (int) config('sentinel.synthesis.max_output_tokens', 32000),
+            (int) config('sentinel.synthesis.max_output_tokens', 16000),
             (int) config('sentinel.synthesis.timeout_seconds', 600),
+            (int) config('sentinel.synthesis.phase_max_output_tokens', 6000),
         ));
 
         $this->app->bind(TemplateRenderer::class, fn (): TemplateRenderer => new BladeTemplateRenderer((string) config('sentinel.paths.prompts')));
@@ -108,9 +109,10 @@ class ScanningServiceProvider extends ServiceProvider
             $app->make(LlmClient::class),
             $app->make(TemplateRenderer::class),
             $app->make(SynthesisPayloadBuilder::class),
-            (int) config('sentinel.synthesis.max_output_tokens', 32000),
+            (int) config('sentinel.synthesis.max_output_tokens', 16000),
             (int) config('sentinel.synthesis.context_window', 200000),
             (int) config('sentinel.synthesis.profile_token_budget', 6000),
+            (int) config('sentinel.synthesis.phase_max_output_tokens', 6000),
         ));
     }
 

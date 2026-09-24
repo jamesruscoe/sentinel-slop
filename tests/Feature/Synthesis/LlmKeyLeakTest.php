@@ -18,7 +18,7 @@ test('a provider error never puts the API key into the exception message, chain 
 
     $thrown = null;
     try {
-        (new PrismLlmClient('anthropic'))->plan('s', 'u', 'claude-sonnet-5');
+        (new PrismLlmClient('anthropic'))->review('s', 'u', 'claude-sonnet-5');
     } catch (SynthesisException $e) {
         $thrown = $e;
     }

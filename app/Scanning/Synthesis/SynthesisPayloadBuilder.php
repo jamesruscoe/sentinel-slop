@@ -29,7 +29,7 @@ final class SynthesisPayloadBuilder
     /**
      * @param  int|null  $maxTokens  A hard ceiling from the caller (what the context window leaves after the
      *                               system prompt and the reply allowance); the configured budget still applies.
-     * @return array{text: string, included: int, omitted: int, aggregated: int, total: int, estimated_tokens: int, by_category: array<string, int>}
+     * @return array{text: string, lines: array<string, string>, included: int, omitted: int, aggregated: int, total: int, estimated_tokens: int, by_category: array<string, int>}
      */
     public function build(FindingCollection $findings, ?int $maxTokens = null): array
     {
@@ -59,7 +59,9 @@ final class SynthesisPayloadBuilder
                 break;
             }
 
-            $lines[] = $entry['text'];
+            // Every line carries an id the review uses to assign it to a phase: "- [F12] [medium] path:line ...".
+            $id = 'F'.($included + 1);
+            $lines[$id] = preg_replace('/^- /', "- [{$id}] ", $entry['text'], 1) ?? $entry['text'];
             $tokens += $cost;
             $included++;
             $coveredFindings += $entry['count'];
@@ -67,6 +69,7 @@ final class SynthesisPayloadBuilder
 
         return [
             'text' => implode("\n", $lines),
+            'lines' => $lines,
             'included' => $included,
             'omitted' => $findings->count() - $coveredFindings,
             'aggregated' => count(array_filter($entries, fn (array $e) => $e['count'] > 1)),

@@ -11,14 +11,19 @@ use App\Scanning\Exceptions\SynthesisException;
 use App\Scanning\Profile\ProfileFormatter;
 
 /**
- * One LLM call produces a review (assessment) plus an editor-neutral plan of
- * three to six phases and a rules file; templates then render the plan for
- * each target editor.
+ * Synthesis in two kinds of call. The review call reads the profile and
+ * the findings and returns the assessment, the outline of three to six
+ * phases (title, goal, what each addresses, and which finding ids it acts
+ * on) and the rules file. Then one call per phase writes that phase's body
+ * from the outline plus only the findings assigned to it. A single call
+ * producing everything reached 28k output tokens on a 21k-line repository;
+ * split, no reply needs more than a few thousand, and a phase can be
+ * regenerated on its own.
  *
  * Budgeting: the repository profile is sent first (capped at
  * profileTokenBudget), the findings payload takes what is left, and system
- * prompt + profile + findings + the reply (max_output_tokens) must fit in
- * the model's context window or the request is refused up front.
+ * prompt + profile + findings + the reply allowance must fit in the model's
+ * context window for every call or the request is refused up front.
  *
  * @phpstan-import-type Phase from SynthesisResult
  * @phpstan-import-type Assessment from SynthesisResult
@@ -36,21 +41,23 @@ final class PromptSynthesiser
         private readonly LlmClient $llm,
         private readonly TemplateRenderer $templates,
         private readonly SynthesisPayloadBuilder $payloads,
-        private readonly int $maxOutputTokens = 32000,
+        private readonly int $maxOutputTokens = 16000,
         private readonly int $contextWindow = 200000,
         private readonly int $profileTokenBudget = 6000,
+        private readonly int $phaseMaxOutputTokens = 6000,
     ) {}
 
     public function synthesise(SynthesisRequest $request): SynthesisResult
     {
         $rulesetText = implode("\n\n", array_map(fn (string $name, string $md) => '## Sentinel Slop ruleset: '.ucfirst($name)." (not a file in the repository)\n\n{$md}", array_keys($request->rulesets), $request->rulesets));
         $system = $this->templates->render('system', ['rulesets' => $rulesetText, 'minPhases' => self::MIN_PHASES, 'maxPhases' => self::MAX_PHASES]);
+        $phaseSystem = $this->templates->render('phase-system', ['rulesets' => $rulesetText]);
 
         $profileText = $this->profileText($request);
         $profileTokens = SynthesisPayloadBuilder::estimateTokens($profileText);
 
-        $systemTokens = SynthesisPayloadBuilder::estimateTokens($system);
-        $availableForFindings = $this->contextWindow - $this->maxOutputTokens - $systemTokens - $profileTokens - self::MARGIN_TOKENS;
+        $systemTokens = max(SynthesisPayloadBuilder::estimateTokens($system), SynthesisPayloadBuilder::estimateTokens($phaseSystem));
+        $availableForFindings = $this->contextWindow - max($this->maxOutputTokens, $this->phaseMaxOutputTokens) - $systemTokens - $profileTokens - self::MARGIN_TOKENS;
         if ($availableForFindings < 500) {
             throw new SynthesisException(sprintf('The system prompt (%d tokens), the profile (%d tokens) and the reply allowance (%d tokens) do not fit in the %d-token context window.', $systemTokens, $profileTokens, $this->maxOutputTokens, $this->contextWindow));
         }
@@ -71,23 +78,23 @@ final class PromptSynthesiser
             'suppressions' => $request->suppressions,
         ]);
 
-        $inputTokens = $systemTokens + SynthesisPayloadBuilder::estimateTokens($user);
-        if ($inputTokens + $this->maxOutputTokens > $this->contextWindow) {
-            throw new SynthesisException(sprintf('The prompt (%d tokens) plus the reply allowance (%d tokens) exceed the %d-token context window.', $inputTokens, $this->maxOutputTokens, $this->contextWindow));
-        }
+        $this->assertFits($system, $user, $this->maxOutputTokens, 'review');
 
-        $sent = ['system' => $system, 'user' => $user, 'model' => $request->model];
+        $sent = ['system' => $system, 'user' => $user, 'model' => $request->model, 'calls' => [], 'phase_prompts' => []];
 
         try {
-            $response = $this->llm->plan($system, $user, $request->model);
-            $assessment = $this->validateAssessment($response->plan['assessment'] ?? null);
-            $phases = $this->validatePhases($response->plan['phases'] ?? null);
-            $rules = $this->validateRules($response->plan['rules'] ?? null);
+            $review = $this->llm->review($system, $user, $request->model);
+            $sent['calls'][] = ['stage' => 'review'] + $review->usage();
+            $assessment = $this->validateAssessment($review->plan['assessment'] ?? null);
+            $outline = $this->validateOutline($review->plan['phases'] ?? null);
+            $rules = $this->validateRules($review->plan['rules'] ?? null);
+
+            $phases = $this->writePhases($request, $outline, $assessment, $profileText, $payload['lines'], $phaseSystem, $sent);
         } catch (SynthesisException $e) {
             throw $e->withPayload($sent);
         }
 
-        $sent['usage'] = $response->usage();
+        $sent['usage'] = $this->totalUsage($sent['calls']);
 
         $prompts = [];
         $rulesFiles = [];
@@ -111,7 +118,91 @@ final class PromptSynthesiser
             'aggregated' => $payload['aggregated'],
             'estimated_tokens' => $payload['estimated_tokens'],
             'profile_tokens' => $profileTokens,
+            'calls' => count($sent['calls']),
         ], $sent);
+    }
+
+    /**
+     * One call per phase, in outline order. Each call sees the assessment
+     * summary, the whole outline, the profile and only the finding lines the
+     * review assigned to that phase; lines the review assigned to no phase
+     * go to the last phase, labelled as such.
+     *
+     * @param  list<array{phase: int, title: string, goal: string, addresses: list<string>, finding_ids: list<string>}>  $outline
+     * @param  Assessment  $assessment
+     * @param  array<string, string>  $lines  finding id => rendered line
+     * @param  array<string, mixed>  $sent
+     * @return list<Phase>
+     */
+    private function writePhases(SynthesisRequest $request, array $outline, array $assessment, string $profileText, array $lines, string $phaseSystem, array &$sent): array
+    {
+        $assigned = [];
+        foreach ($outline as $entry) {
+            foreach ($entry['finding_ids'] as $id) {
+                $assigned[$id] = true;
+            }
+        }
+        $unassigned = array_diff_key($lines, $assigned);
+
+        $phases = [];
+        $last = count($outline) - 1;
+        foreach ($outline as $index => $entry) {
+            $own = [];
+            foreach ($entry['finding_ids'] as $id) {
+                if (isset($lines[$id])) {
+                    $own[$id] = $lines[$id];
+                }
+            }
+            $extra = $index === $last ? $unassigned : [];
+
+            $phaseUser = $this->templates->render('phase-user', [
+                'repository' => $request->repositoryName,
+                'stack' => $request->stack,
+                'score' => $request->score,
+                'assessment' => $assessment,
+                'outline' => $outline,
+                'phase' => $entry,
+                'profile' => $profileText,
+                'findings' => implode("\n", [...$own, ...$extra]) ?: '(none assigned: work from the goal, the profile and the review)',
+                'included' => count($own),
+                'unassigned' => count($extra),
+            ]);
+            $this->assertFits($phaseSystem, $phaseUser, $this->phaseMaxOutputTokens, "phase {$entry['phase']}");
+
+            $response = $this->llm->phase($phaseSystem, $phaseUser, $request->model);
+            $sent['calls'][] = ['stage' => 'phase '.$entry['phase']] + $response->usage();
+            $sent['phase_prompts'][$entry['phase']] = $phaseUser;
+
+            $body = trim((string) ($response->plan['body'] ?? ''));
+            if (str_word_count($body) < 40) {
+                throw new SynthesisException(sprintf('The model returned no usable body for phase %d ("%s").', $entry['phase'], $entry['title']));
+            }
+
+            $phases[] = ['phase' => $entry['phase'], 'title' => $entry['title'], 'goal' => $entry['goal'], 'body' => $body, 'addresses' => $entry['addresses']];
+        }
+
+        return $phases;
+    }
+
+    private function assertFits(string $system, string $user, int $outputAllowance, string $stage): void
+    {
+        $inputTokens = SynthesisPayloadBuilder::estimateTokens($system) + SynthesisPayloadBuilder::estimateTokens($user);
+        if ($inputTokens + $outputAllowance > $this->contextWindow) {
+            throw new SynthesisException(sprintf('The %s prompt (%d tokens) plus the reply allowance (%d tokens) exceed the %d-token context window.', $stage, $inputTokens, $outputAllowance, $this->contextWindow));
+        }
+    }
+
+    /**
+     * @param  list<array{stage: string, finish_reason: string, input_tokens: int, output_tokens: int}>  $calls
+     * @return array{finish_reason: string, input_tokens: int, output_tokens: int}
+     */
+    private function totalUsage(array $calls): array
+    {
+        return [
+            'finish_reason' => 'stop',
+            'input_tokens' => array_sum(array_column($calls, 'input_tokens')),
+            'output_tokens' => array_sum(array_column($calls, 'output_tokens')),
+        ];
     }
 
     /**
@@ -175,33 +266,34 @@ final class PromptSynthesiser
     }
 
     /**
-     * Three to six phases with distinct titles and non-empty bodies, renumbered
-     * in the order the model gave them (its impact order).
+     * Three to six phases with distinct titles, renumbered in the order the
+     * model gave them (the fixed order the system prompt requires).
      *
-     * @return list<Phase>
+     * @return list<array{phase: int, title: string, goal: string, addresses: list<string>, finding_ids: list<string>}>
      */
-    private function validatePhases(mixed $phases): array
+    private function validateOutline(mixed $phases): array
     {
         if (! is_array($phases)) {
             throw new SynthesisException('The model returned no phases.');
         }
+
+        $strings = fn (mixed $list): array => array_values(array_filter(array_map(fn ($i) => trim(is_scalar($i) ? (string) $i : ''), is_array($list) ? $list : []), fn (string $i) => $i !== ''));
 
         $usable = [];
         foreach ($phases as $phase) {
             if (! is_array($phase)) {
                 continue;
             }
-            $body = trim((string) ($phase['body'] ?? ''));
             $title = trim((string) ($phase['title'] ?? ''));
-            if ($body === '' || $title === '') {
+            if ($title === '') {
                 continue;
             }
             $usable[] = [
                 'order' => (int) ($phase['phase'] ?? count($usable) + 1),
                 'title' => $title,
                 'goal' => trim((string) ($phase['goal'] ?? '')),
-                'body' => $body,
-                'addresses' => array_values(array_filter(array_map(fn ($a) => trim(is_scalar($a) ? (string) $a : ''), is_array($phase['addresses'] ?? null) ? $phase['addresses'] : []), fn (string $a) => $a !== '')),
+                'addresses' => $strings($phase['addresses'] ?? []),
+                'finding_ids' => array_map(fn (string $id) => strtoupper(trim($id, "[] \t")), $strings($phase['finding_ids'] ?? [])),
             ];
         }
 
@@ -218,7 +310,7 @@ final class PromptSynthesiser
 
         $numbered = [];
         foreach ($usable as $index => $phase) {
-            $numbered[] = ['phase' => $index + 1, 'title' => $phase['title'], 'goal' => $phase['goal'], 'body' => $phase['body'], 'addresses' => $phase['addresses']];
+            $numbered[] = ['phase' => $index + 1, 'title' => $phase['title'], 'goal' => $phase['goal'], 'addresses' => $phase['addresses'], 'finding_ids' => $phase['finding_ids']];
         }
 
         return $numbered;

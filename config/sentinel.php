@@ -229,8 +229,11 @@ return [
         // Findings payload budget (input). The synthesiser also caps it so that
         // system prompt + findings + max_output_tokens always fit in context_window.
         'token_budget' => (int) env('SENTINEL_LLM_TOKEN_BUDGET', 24000),
-        // A 23-finding fixture produced ~12k output tokens; the model does not reliably honour the word limit, so leave headroom.
-        'max_output_tokens' => (int) env('SENTINEL_LLM_MAX_OUTPUT_TOKENS', 32000),
+        // The review call returns the assessment, the phase outline and the rules file (observed 3-6k tokens); each
+        // phase body is its own call. A single call producing everything reached 28k output tokens on a 21k-line
+        // repository, within 4k of the cap.
+        'max_output_tokens' => (int) env('SENTINEL_LLM_MAX_OUTPUT_TOKENS', 16000),
+        'phase_max_output_tokens' => (int) env('SENTINEL_LLM_PHASE_MAX_OUTPUT_TOKENS', 6000),
         'context_window' => (int) env('SENTINEL_LLM_CONTEXT_WINDOW', 200000),
         // Non-streaming: the whole reply is generated before a byte arrives, and 15-20k output tokens take several minutes.
         'timeout_seconds' => (int) env('SENTINEL_LLM_TIMEOUT', 600),

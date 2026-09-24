@@ -18,7 +18,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property array<string, mixed>|null $profile RepositoryProfile::toArray()
  * @property array{summary: string, strengths: list<string>, structural_problems: list<array{title: string, evidence: string, impact: string}>, recommended_refactors: list<array{title: string, rationale: string, scope: string, effort: string}>}|null $assessment
  * @property int|null $slop_score_without_structure
- * @property array{system: string, user: string, model: string, truncated?: bool, usage?: array{finish_reason: string, input_tokens: int, output_tokens: int}}|null $synthesis_payload
+ * @property array{system: string, user: string, model: string, truncated?: bool, usage?: array{finish_reason: string, input_tokens: int, output_tokens: int}, calls?: list<array{stage: string, finish_reason: string, input_tokens: int, output_tokens: int}>, phase_prompts?: array<int, string>}|null $synthesis_payload
  */
 #[Fillable([
     'repository_id', 'user_id', 'status', 'commit_sha', 'slop_score', 'slop_score_without_structure', 'detected_stack',

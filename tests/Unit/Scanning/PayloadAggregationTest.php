@@ -24,8 +24,8 @@ test('a rule firing more than the threshold collapses into one line with a count
         ->and($result['omitted'])->toBe(0)
         ->and($result['aggregated'])->toBe(1)
         ->and($lines)->toHaveCount(5)
-        ->and($lines[0])->toStartWith('- [medium]')
-        ->and(end($lines))->toStartWith('- [low] 131 findings in 131 files (pint/style) style: Code style differs from the Laravel preset. Examples: app/F1.php:1; app/F2.php:1; app/F3.php:1; app/F4.php:1; app/F5.php:1 (+126 more).')
+        ->and($lines[0])->toStartWith('- [F1] [medium]')
+        ->and(end($lines))->toStartWith('- [F5] [low] 131 findings in 131 files (pint/style) style: Code style differs from the Laravel preset. Examples: app/F1.php:1; app/F2.php:1; app/F3.php:1; app/F4.php:1; app/F5.php:1 (+126 more).')
         ->and($result['text'])->not->toContain('app/F6.php');
 });
 

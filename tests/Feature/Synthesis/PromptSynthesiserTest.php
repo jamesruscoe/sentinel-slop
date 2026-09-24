@@ -40,8 +40,20 @@ test('the synthesiser sends stack, score, rulesets and redacted findings and ren
 
     $result = $synthesiser->synthesise(synthesisRequest());
 
-    expect($llm->calls)->toHaveCount(1)
+    // One review call, then one call per phase in the outline.
+    expect($llm->calls)->toHaveCount(5)
+        ->and(array_column($llm->calls, 'stage'))->toBe(['review', 'phase', 'phase', 'phase', 'phase'])
         ->and($llm->calls[0]['model'])->toBe('claude-sonnet-5')
+        ->and($llm->calls[1]['system'])->toContain('writing one phase of a fix-it plan', 'Never infer, guess or invent', 'confirm X, then do Y', '## Sentinel Slop ruleset: Laravel')
+        ->and($llm->calls[1]['user'])->toContain('## This phase: 1 of 4', 'Title: Phase 1 title', 'Goal: Phase 1 is done.', 'Addresses: problem 1', '## The plan (all phases, in order)', '2. Phase 2 title', '[F1] [critical] config/x.php:9')
+        ->and($llm->calls[1]['user'])->not->toContain('[F2] [medium]')
+        ->and($llm->calls[2]['user'])->toContain('## This phase: 2 of 4', '[F2] [medium] app/A.php:3')
+        // Findings the review assigned to no phase go to the last phase, labelled as such.
+        ->and($llm->calls[4]['user'])->toContain('## This phase: 4 of 4', '0 finding lines were assigned to this phase by the review')
+        ->and($result->payload['calls'])->toHaveCount(5)
+        ->and($result->payload['calls'][0]['stage'])->toBe('review')
+        ->and($result->payload['phase_prompts'])->toHaveKeys([1, 2, 3, 4])
+        ->and($result->payload['usage']['output_tokens'])->toBe(900 + 4 * 300)
         ->and($llm->calls[0]['system'])->toContain('## Sentinel Slop ruleset: Laravel (not a file in the repository)', 'strict_types', 'never cite one by name', 'reviewing a codebase for maintainability', 'between 3 and 6 phases', 'Never present conventional structure', '1. Correctness', '2. Observability', '3. Structure and duplication', '4. Style, types and dependency declarations')
         ->and($llm->calls[0]['system'])->toContain('Never infer, guess or invent a class, method, function, variable or route name')
         ->and($llm->calls[0]['user'])->toContain('acme/app', 'Slop score: 61/100', 'PHP (90%)', 'laravel 12', 'Runtimes declared: PHP 8.3', 'config/x.php:9', 'app/A.php:3 in App\A::total()', 'return "0";', 'Inline suppression comments: 3');
@@ -64,7 +76,7 @@ test('the synthesiser sends stack, score, rulesets and redacted findings and ren
         ->and($llm->calls[0]['user'])->not->toContain('## Repository profile')
         ->and($result->rulesFileFor(TargetEditor::ClaudeCode))->toMatchArray(['filename' => 'CLAUDE.md'])
         ->and($result->rulesFileFor(TargetEditor::ClaudeCode)['body'])->toContain('# acme/app conventions', 'Keep it tidy & typed.', '## Errors', '- Never swallow exceptions', "Stack: laravel 12 on PHP 8.3. Generated from Sentinel Slop's php, laravel, javascript rulesets, which are not files in this repository.")
-        ->and($result->payload['usage'])->toMatchArray(['finish_reason' => 'stop', 'output_tokens' => 900])
+        ->and($result->payload['usage'])->toMatchArray(['finish_reason' => 'stop', 'output_tokens' => 2100])
         ->and($result->rulesFileFor(TargetEditor::Cursor)['filename'])->toBe('.cursor/rules/sentinel-slop.mdc')
         ->and($result->rulesFileFor(TargetEditor::Cursor)['body'])->toStartWith("---\ndescription: acme/app conventions")
         ->and($result->rulesFileFor(TargetEditor::Cursor)['body'])->toContain('alwaysApply: true')
@@ -95,6 +107,24 @@ test('the reachability section reaches the reviewer with the unreferenced files 
 
     expect($llm->calls[0]['user'])->toContain('UNREFERENCED app/A.php')
         ->and($llm->calls[0]['system'])->toContain('Findings inside those files have already been removed', 'Repeated code is not automatically a problem', 'A stale TODO is not an unimplemented method', 'never propose logging business-rule outcomes');
+});
+
+test('a phase call that fails or returns no usable body fails synthesis with every prompt sent so far attached', function () {
+    $llm = new FakeLlmClient(FakeLlmClient::samplePlan(), phaseResponse: ['body' => 'Too short.']);
+    $synthesiser = new PromptSynthesiser($llm, app(TemplateRenderer::class), new SynthesisPayloadBuilder);
+
+    try {
+        $synthesiser->synthesise(synthesisRequest());
+        $this->fail('expected a SynthesisException');
+    } catch (SynthesisException $e) {
+        expect($e->getMessage())->toContain('no usable body for phase 1')
+            ->and($e->payload['calls'])->toHaveCount(2)
+            ->and($e->payload['phase_prompts'])->toHaveKey(1);
+    }
+
+    $llm = new FakeLlmClient(FakeLlmClient::samplePlan(), phaseResponse: new SynthesisException('LLM phase request failed: timeout'));
+    $synthesiser = new PromptSynthesiser($llm, app(TemplateRenderer::class), new SynthesisPayloadBuilder);
+    expect(fn () => $synthesiser->synthesise(synthesisRequest()))->toThrow(SynthesisException::class, 'phase request failed');
 });
 
 test('a plan with too few phases, too many phases or duplicate titles is rejected rather than stored', function () {

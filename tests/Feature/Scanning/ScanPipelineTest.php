@@ -32,7 +32,11 @@ beforeEach(function () {
     $this->repository = Repository::factory()->for(Installation::factory()->for(User::factory()))->create(['full_name' => 'acme/laravel-basic', 'default_branch' => null]);
     $this->source = FakeContentSource::fromDirectory(fixturePath('laravel-basic'));
     $this->source->languages = ['PHP' => 9000, 'Blade' => 500];
-    Prism::fake([StructuredResponseFake::make()->withStructured(FakeLlmClient::samplePlan())]);
+    // The review reply, then one body per phase in the outline.
+    Prism::fake([
+        StructuredResponseFake::make()->withStructured(FakeLlmClient::samplePlan()),
+        ...array_map(fn (int $n) => StructuredResponseFake::make()->withStructured(['body' => "Run the full test suite first and confirm it is green. Do phase {$n} things: fix a.php:3 as the finding describes, apply the same pattern wherever it recurs, keep commits small with clear messages, and run the tests again before you finish. Stop if anything fails. Make no unrelated changes beyond this scope."]), [1, 2, 3, 4]),
+    ]);
 
     app()->instance(ContentSourceResolver::class, new class($this->source) implements ContentSourceResolver
     {
