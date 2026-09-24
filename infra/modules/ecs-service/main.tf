@@ -59,6 +59,10 @@ resource "aws_ecs_service" "this" {
   deployment_minimum_healthy_percent = 100
   deployment_maximum_percent         = 200
 
+  # ECS Exec: lets `aws ssm start-session` port-forward through a running task to RDS and Redis, which have
+  # no public endpoint. Nothing inside the container changes; the agent is injected by Fargate.
+  enable_execute_command = true
+
   deployment_circuit_breaker {
     enable   = true
     rollback = true

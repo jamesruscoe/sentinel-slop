@@ -64,6 +64,22 @@ resource "aws_iam_role" "task" {
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
 }
 
+# The only thing the application's task role may do: hold the SSM channel that ECS Exec uses, so an operator
+# can port-forward to the database through a task (TablePlus, mysql). The application itself calls no AWS API.
+data "aws_iam_policy_document" "task_exec" {
+  statement {
+    sid       = "EcsExecChannel"
+    actions   = ["ssmmessages:CreateControlChannel", "ssmmessages:CreateDataChannel", "ssmmessages:OpenControlChannel", "ssmmessages:OpenDataChannel"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "task_exec" {
+  name   = "ecs-exec"
+  role   = aws_iam_role.task.id
+  policy = data.aws_iam_policy_document.task_exec.json
+}
+
 # GitHub Actions OIDC. The provider is account-wide; create it here unless the other application already did,
 # in which case set create_oidc_provider = false and the data source finds it.
 resource "aws_iam_openid_connect_provider" "github" {
