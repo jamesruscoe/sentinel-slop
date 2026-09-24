@@ -230,6 +230,12 @@ final class RepositoryProfiler
         };
     }
 
+    /** Seeders, factories, migrations, config, fixtures and translations: lists, not logic. */
+    public static function isDataPath(string $path): bool
+    {
+        return preg_match('~(^|/)(database|config|fixtures?|seeds?|seeders?|factories|migrations|lang|locales?)/~i', $path) === 1;
+    }
+
     public static function familyName(string $family): string
     {
         return match ($family) {
@@ -608,7 +614,7 @@ final class RepositoryProfiler
     {
         $files = [];
         foreach ($source as $f) {
-            if (! $f['is_test']) {
+            if (! $f['is_test'] && ! self::isDataPath($f['path'])) {
                 $files[] = ['path' => $f['path'], 'code_lines' => $f['code_lines']];
             }
         }
@@ -625,7 +631,8 @@ final class RepositoryProfiler
     {
         $functions = [];
         foreach ($source as $file) {
-            if ($file['is_test']) {
+            // A 140-line seeder run() or a config array is data, not a unit anyone should split.
+            if ($file['is_test'] || self::isDataPath($file['path'])) {
                 continue;
             }
             foreach ($file['functions'] as $function) {
@@ -870,7 +877,8 @@ final class RepositoryProfiler
         }
         $autoloadFiles = array_fill_keys(array_map(fn (string $f) => ltrim(str_replace(chr(92), '/', $f), './'), $manifests['composer_files']), true);
 
-        $unreferenced = [];
+        /** @var array<string, array{path: string, area: string, kind: string, code_lines: int}> $candidates */
+        $candidates = [];
         $missing = [];
         foreach ($all as $file) {
             if (! in_array($file['family'], ['php', 'js', 'python', 'ruby'], true) || $file['is_test']) {
@@ -901,12 +909,30 @@ final class RepositoryProfiler
             if ($file['family'] === 'php' && $file['declares'] === [] && ! $isRouteFile) {
                 continue; // procedural file: nothing to reference it by name
             }
-            if (isset($autoloadFiles[$file['path']]) || $graph->importedBy($file['path']) !== [] || $graph->isGlobbed($file['path'])) {
+            if (isset($autoloadFiles[$file['path']]) || $graph->isGlobbed($file['path'])) {
                 continue;
             }
 
-            $unreferenced[] = ['path' => $file['path'], 'area' => $file['area'], 'kind' => $file['kind'], 'code_lines' => $file['code_lines']];
+            $candidates[$file['path']] = ['path' => $file['path'], 'area' => $file['area'], 'kind' => $file['kind'], 'code_lines' => $file['code_lines']];
         }
+
+        // Fixed point: a file referenced only by dead files is dead too (a controller wired only from a route
+        // file nothing loads). Start from the files nothing references and keep removing importers that are dead.
+        $dead = [];
+        do {
+            $changed = false;
+            foreach ($candidates as $path => $file) {
+                if (isset($dead[$path])) {
+                    continue;
+                }
+                $live = array_filter($graph->importedBy($path), fn (string $importer) => ! isset($dead[$importer]) && $importer !== $path);
+                if ($live === []) {
+                    $dead[$path] = $file;
+                    $changed = true;
+                }
+            }
+        } while ($changed);
+        $unreferenced = array_values($dead);
         usort($unreferenced, fn (array $a, array $b) => [$a['area'], $b['code_lines']] <=> [$b['area'], $a['code_lines']]);
 
         return [

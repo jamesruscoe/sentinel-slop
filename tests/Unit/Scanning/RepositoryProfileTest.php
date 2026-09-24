@@ -56,7 +56,8 @@ test('a framework-less python package with nothing in place produces exactly the
 
     // Handlers, jobs and five repositories are imported by nothing: nothing in the package wires them up (one finding, one area).
     expect(ruleIds($findings))->toBe(['env-read-outside-config', 'no-input-validation', 'no-logging-anywhere', 'no-tests-at-all', 'unguarded-external-calls', 'unreferenced-code'])
-        ->and(count($profile->section('reachability')['unreferenced']))->toBe(19);
+        // 20: the shipment repository is referenced only by the dead jobs, so the fixed point marks it dead as well.
+        ->and(count($profile->section('reachability')['unreferenced']))->toBe(20);
 
     $bySeverity = [];
     foreach ($findings as $finding) {
@@ -203,7 +204,9 @@ test('files nothing imports, mentions or globs are unreferenced; framework entry
     file_put_contents($repo.'/routes/kennel.php', "<?php\n\nRoute::get('/kennel', fn () => 'never loaded');\n");
     file_put_contents($repo.'/app/helpers.php', "<?php\n\nfunction kennel_name(): string\n{\n    return 'Kennel';\n}\n");
     file_put_contents($repo.'/app/Http/Controllers/DogController.php', "<?php\n\nnamespace App\\Http\\Controllers;\n\nuse App\\Services\\DogService;\nuse Inertia\\Inertia;\n\nclass DogController\n{\n    public function index(DogService \$dogs)\n    {\n        return Inertia::render('Dogs/Index', ['dogs' => \$dogs->all()]);\n    }\n}\n");
-    file_put_contents($repo.'/app/Http/Controllers/HandleAccountController.php', "<?php\n\nnamespace App\\Http\\Controllers;\n\nuse App\\Services\\AccountService;\n\nclass HandleAccountController\n{\n    public function __invoke(AccountService \$accounts): void\n    {\n        \$accounts->handle();\n    }\n}\n");
+    file_put_contents($repo.'/app/Http/Controllers/HandleAccountController.php', "<?php\n\nnamespace App\\Http\\Controllers;\n\nuse App\\Services\\AccountService;\nuse App\\Services\\OrphanService;\n\nclass HandleAccountController\n{\n    public function __invoke(AccountService \$accounts, OrphanService \$orphans): void\n    {\n        \$accounts->handle();\n    }\n}\n");
+    // Referenced only by a dead controller: dead too (fixed point), like a controller wired only from an unloaded route file.
+    file_put_contents($repo.'/app/Services/OrphanService.php', "<?php\n\nnamespace App\\Services;\n\nclass OrphanService\n{\n    public function handle(): void\n    {\n    }\n}\n");
     file_put_contents($repo.'/app/Services/DogService.php', "<?php\n\nnamespace App\\Services;\n\nclass DogService\n{\n    public function all(): array\n    {\n        return view('emails.welcome') ? [] : [];\n    }\n}\n");
     file_put_contents($repo.'/resources/views/emails/welcome.blade.php', "<p>Welcome</p>\n");
     file_put_contents($repo.'/resources/js/app.ts', "import { createInertiaApp } from '@inertiajs/vue3'\nconst pages = import.meta.glob('./pages/**/*.vue')\ncreateInertiaApp({ resolve: (name) => pages[`./pages/\${name}.vue`] })\n");
@@ -222,9 +225,9 @@ test('files nothing imports, mentions or globs are unreferenced; framework entry
         $byRule[(string) $finding->ruleId][] = $finding;
     }
 
-    expect($unreferenced)->toBe(['app/Http/Controllers/HandleAccountController.php', 'resources/js/Components/Unused.vue', 'resources/js/services/NotificationApiService.ts', 'routes/kennel.php'])
+    expect($unreferenced)->toBe(['app/Http/Controllers/HandleAccountController.php', 'app/Services/OrphanService.php', 'resources/js/Components/Unused.vue', 'resources/js/services/NotificationApiService.ts', 'routes/kennel.php'])
         ->and($profile->section('reachability')['missing_own_classes'])->toBe([['file' => 'app/Http/Controllers/HandleAccountController.php', 'class' => 'App\Services\AccountService']])
-        ->and(array_map(fn (Finding $f) => $f->filePath, $byRule['unreferenced-code']))->toBe(['app/Http/Controllers', 'resources/js/Components', 'resources/js/services', 'routes'])
+        ->and(array_map(fn (Finding $f) => $f->filePath, $byRule['unreferenced-code']))->toBe(['app/Http/Controllers', 'app/Services', 'resources/js/Components', 'resources/js/services', 'routes'])
         ->and($byRule['missing-own-class'][0]->severity)->toBe(Severity::Medium)
         ->and($byRule['missing-own-class'][0]->message)->toContain('App\Services\AccountService', 'delete both');
 });
