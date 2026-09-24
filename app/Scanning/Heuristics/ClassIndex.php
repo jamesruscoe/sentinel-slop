@@ -20,6 +20,9 @@ final class ClassIndex
     /** @var array<string, array{kind: string, parent: string|null, interfaces: list<string>, traits: list<string>, methods: array<string, true>, properties: array<string, string|null>, abstract: bool, magic: bool}> */
     private array $classes = [];
 
+    /** @var array<string, true> lower-case FQCNs that at least one class in the repository extends */
+    private array $parents = [];
+
     /**
      * Only the registry is kept. Retaining every name-resolved AST made the
      * index grow with the repository (1 GB on laravel/framework's 3,100 files,
@@ -67,14 +70,16 @@ final class ClassIndex
     }
 
     /**
-     * A concrete class: calls on an interface- or abstract-typed receiver may
-     * be answered by a subclass this index cannot see, so they are never judged.
+     * A concrete class nothing in the repository extends: a call on a receiver
+     * typed with an interface, an abstract class or a base class may be
+     * answered by a subclass, so only leaf classes are ever judged.
      */
-    public function isConcrete(string $fqcn): bool
+    public function isLeaf(string $fqcn): bool
     {
-        $entry = $this->classes[strtolower($fqcn)] ?? null;
+        $key = strtolower($fqcn);
+        $entry = $this->classes[$key] ?? null;
 
-        return $entry !== null && $entry['kind'] === 'class' && ! $entry['abstract'];
+        return $entry !== null && $entry['kind'] === 'class' && ! $entry['abstract'] && ! isset($this->parents[$key]);
     }
 
     public function isAbstract(string $fqcn): bool
@@ -217,6 +222,9 @@ final class ClassIndex
             'kind' => $kind, 'parent' => $parent, 'interfaces' => $interfaces, 'traits' => $traits,
             'methods' => $methods, 'properties' => $properties, 'abstract' => $abstract, 'magic' => $magic,
         ];
+        if ($parent !== null) {
+            $this->parents[strtolower($parent)] = true;
+        }
     }
 
     public static function classType(?Node $type): ?string

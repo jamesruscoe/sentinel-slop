@@ -57,9 +57,13 @@ final class UndefinedMembersHeuristic implements Heuristic
 
                 foreach ($class->getMethods() as $method) {
                     $paramTypes = $this->parameterTypes($method);
+                    // `$this` inside an anonymous class declared in this method is that class, not this one
+                    // (AsEnumArrayObject::castUsing() returns `new class { ... $this->getStorableEnumValue() }`).
+                    $anonymous = array_map(fn (Node\Stmt\Class_ $nested) => [$nested->getStartLine(), $nested->getEndLine()], PhpSource::find($method->getStmts() ?? [], Node\Stmt\Class_::class));
+                    $insideAnonymous = fn (Node $node) => array_any($anonymous, fn (array $range) => $node->getStartLine() >= $range[0] && $node->getEndLine() <= $range[1]);
 
                     foreach (PhpSource::find($method->getStmts() ?? [], Node\Expr\MethodCall::class) as $call) {
-                        if (! $call->name instanceof Node\Identifier) {
+                        if (! $call->name instanceof Node\Identifier || $insideAnonymous($call)) {
                             continue;
                         }
 
@@ -72,7 +76,7 @@ final class UndefinedMembersHeuristic implements Heuristic
                     }
 
                     foreach (PhpSource::find($method->getStmts() ?? [], Node\Expr\StaticCall::class) as $call) {
-                        if (! $call->name instanceof Node\Identifier || ! $call->class instanceof Node\Name) {
+                        if (! $call->name instanceof Node\Identifier || ! $call->class instanceof Node\Name || $insideAnonymous($call)) {
                             continue;
                         }
 
@@ -110,15 +114,16 @@ final class UndefinedMembersHeuristic implements Heuristic
 
             $type = $paramTypes[$var->name] ?? null;
 
-            // Interface- and abstract-typed receivers are skipped: the object is a subclass the index may not see
-            // (Authenticatable $user calling save() on an Eloquent model, on laravel/framework itself).
-            return $type !== null && $index->isConcrete($type) ? [$type, $index->resolvableMethods($type)] : [null, null];
+            // Interface-, abstract- and base-class-typed receivers are skipped: the object may be a subclass that
+            // declares the method (Authenticatable $user calling save(); Notification $n calling toMail(), which
+            // every concrete notification defines, on laravel/framework itself).
+            return $type !== null && $index->isLeaf($type) ? [$type, $index->resolvableMethods($type)] : [null, null];
         }
 
         if ($var instanceof Node\Expr\PropertyFetch && $var->var instanceof Node\Expr\Variable && $var->var->name === 'this' && $var->name instanceof Node\Identifier) {
             $type = $ownProperties[$var->name->toString()] ?? null;
 
-            return $type !== null && $index->isConcrete($type) ? [$type, $index->resolvableMethods($type)] : [null, null];
+            return $type !== null && $index->isLeaf($type) ? [$type, $index->resolvableMethods($type)] : [null, null];
         }
 
         return [null, null];
