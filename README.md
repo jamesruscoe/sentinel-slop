@@ -87,7 +87,7 @@ One container image, three ECS services on one Fargate cluster, all from the sam
 | Service | Command | Size | Exposed | Needs |
 |---|---|---|---|---|
 | `web` | php-fpm + nginx (image default) | 0.5 vCPU / 1 GB | ALB target group, port 8080, health check `/up` | DB, Redis, GitHub OAuth + webhook secrets, Reverb app key |
-| `worker` | `php artisan horizon` plus a `schedule:work` sidecar container | 1 vCPU / 2 GB (2 / 4 when PHPStan on large repositories is too slow) | nothing | DB, Redis, GitHub App private key, Anthropic key, Reverb app secret |
+| `worker` | entrypoint runs `php artisan sentinel:recover-interrupted --force`, then `php artisan horizon`; a `schedule:work` sidecar container | 2 vCPU / 4 GB (PHPStan and Pint each take ~65 ms per PHP file on a laptop core; `SENTINEL_TOOL_TIMEOUT` is 900 s and `SENTINEL_JOB_TIMEOUT` 2,700 s) | nothing | DB, Redis, GitHub App private key, Anthropic key, Reverb app secret |
 | `reverb` (optional, see below) | `php artisan reverb:start --host=0.0.0.0 --port=8080` | 0.25 vCPU / 0.5 GB | ALB rule for `/app/*` and `/apps/*`, WebSocket | Redis, Reverb app credentials |
 
 Around them: RDS MySQL 8 (`db.t4g.micro`, 20 GB gp3, single AZ, automated backups), ElastiCache Valkey (`cache.t4g.micro`, one node), ECR, an ALB with an ACM certificate, Secrets Manager (or SSM Parameter Store SecureString; pick whichever the other application already uses), CloudWatch log groups per service, Route 53. Tasks run in public subnets with public IPs and a security group that only accepts the ALB, so there is no NAT gateway to pay for: GitHub and the Anthropic API are reached directly.
@@ -100,9 +100,10 @@ Around them: RDS MySQL 8 (`db.t4g.micro`, 20 GB gp3, single AZ, automated backup
 - Composer: `composer install --no-dev --classmap-authoritative` from `composer.lock` (PHPStan and Pint are pinned there). The detached PHPStan phar copy `storage/sentinel-tools/phpstan.phar` is made at build time so the runtime filesystem can be read-only apart from `/tmp` and the scan workspace.
 - Node 24 (exact version) copied from the official `node:24.x.y-bookworm-slim` image; `npm ci --omit=dev` installs ESLint, `typescript-eslint` and jscpd from `package-lock.json`; `npm run build` produces the Vite assets in a separate stage so devDependencies never reach the runtime image.
 - Semgrep, gitleaks and Ruff at exact versions from `docker/tools.env` (`SEMGREP_VERSION`, `GITLEAKS_VERSION`, `RUFF_VERSION`, `NODE_VERSION`), the only place those numbers live. gitleaks and Ruff are GitHub release tarballs verified against sha256 sums checked into `docker/checksums.txt`; Semgrep is `pip install --require-hashes -r docker/semgrep-requirements.txt`. Renovate or Dependabot bumps `tools.env` and the sums in one pull request.
-- The image sets `SENTINEL_SEMGREP_VERSION`, `SENTINEL_GITLEAKS_VERSION` and `SENTINEL_RUFF_VERSION` from the same build args, and the last build step runs `php artisan sentinel:doctor --strict`, which fails the build when any binary's reported version differs from its pin. A drifted version is therefore a red build, never a first scan with an unverified tool.
+- The image sets `SENTINEL_SEMGREP_VERSION`, `SENTINEL_GITLEAKS_VERSION` and `SENTINEL_RUFF_VERSION` from the same build args, and the last build step runs `php artisan sentinel:doctor --strict`, which fails the build when any tool is missing or unpinned, when a binary's reported version differs from its pin (PHPStan, Pint, ESLint and jscpd are checked against what `composer.lock` and `package-lock.json` installed), when a required PHP extension (`zlib mbstring pdo_mysql redis pcntl posix`) is not loaded, or when `memory_limit` is below `SENTINEL_WORKER_MEMORY_LIMIT` (1G; the CLI default of 128M killed a scan of laravel/framework). A drifted version is therefore a red build, never a first scan with an unverified tool.
 - CI runs the canary tests (`tests/Feature/Scanning/MaliciousConfigsTest.php`, `ProductionWorkspaceTest.php` and the analyser tests) inside the built image, not on the runner, so the flags are proven against the binaries that ship.
-- Runs as a non-root user; `SENTINEL_SCAN_STORAGE_PATH=/tmp/sentinel/scans` on the task's ephemeral storage (20 GB comes with every Fargate task; a scan needs at most 50 MB of files plus tool output, so no EFS and no extra storage).
+- Runs as a non-root user; `SENTINEL_SCAN_STORAGE_PATH=/tmp/sentinel/scans` on the task's ephemeral storage (20 GB comes with every Fargate task; a scan needs at most 150 MB of extracted files plus the compressed archive and tool output, so no EFS and no extra storage).
+- Repositories arrive as one tarball (three GitHub API requests per scan, whatever the file count), streamed to disk with the byte limit applied to the download and extracted entry by entry by our own tar reader: symlinks and hard links are never written, and the file and byte limits abort extraction early. Limits count analysable files only (`SENTINEL_MAX_FILE_COUNT` 12,000, `SENTINEL_MAX_TOTAL_BYTES` 150 MB).
 
 ### Secrets and configuration
 
@@ -119,9 +120,9 @@ Non-secret configuration is plain environment in the task definition. Secrets ar
 | `ANTHROPIC_API_KEY` | no | yes | no |
 | `REVERB_APP_SECRET` | yes (client auth) | yes (publishes events) | yes |
 
-`GITHUB_APP_PRIVATE_KEY_PATH` becomes optional: production supplies the PEM through `GITHUB_APP_PRIVATE_KEY` (multi-line values are fine in Secrets Manager). Task roles (what the code can call on AWS at runtime) are empty for every service: the application uses no AWS API. Execution roles get ECR pull, CloudWatch logs and `GetSecretValue`/`GetParameters` on the ARNs in the table above and nothing else.
+Production supplies the PEM through `GITHUB_APP_PRIVATE_KEY`, base64-encoded on one line (`base64 -w0 github-app.pem`) so it survives any secrets manager and shell; the raw PEM is accepted too, and it takes precedence over `GITHUB_APP_PRIVATE_KEY_PATH`, which stays for local development. Task roles (what the code can call on AWS at runtime) are empty for every service: the application uses no AWS API. Execution roles get ECR pull, CloudWatch logs and `GetSecretValue`/`GetParameters` on the ARNs in the table above and nothing else.
 
-Other production settings: `LOG_CHANNEL=stderr` (CloudWatch collects it), `SESSION_DRIVER=database`, `CACHE_STORE=redis`, `QUEUE_CONNECTION=redis`, `REDIS_QUEUE_RETRY_AFTER=960` (must exceed the 900 s stage timeout, see `config/queue.php`), `SENTINEL_SCAN_WORKERS=1` per worker task (scale by adding tasks, not processes, so one scan cannot starve another of the task's CPU), trusted proxies set to the VPC CIDR so the ALB's `X-Forwarded-Proto` produces https URLs.
+Other production settings: `LOG_CHANNEL=stderr` (CloudWatch collects it), `SESSION_DRIVER=database`, `CACHE_STORE=redis`, `QUEUE_CONNECTION=redis`, `SENTINEL_JOB_TIMEOUT=2700` (one pipeline stage; `REDIS_QUEUE_RETRY_AFTER` defaults to it plus 60 s and must stay above it, see `config/queue.php`), `SENTINEL_SCAN_WORKERS=1` per worker task (scale by adding tasks, not processes, so one scan cannot starve another of the task's CPU), trusted proxies set to the VPC CIDR so the ALB's `X-Forwarded-Proto` produces https URLs.
 
 ### Reverb or polling
 
@@ -131,7 +132,7 @@ The scan page polls every 5 seconds whenever websockets are unavailable, so Reve
 
 `.github/workflows/deploy.yml` on push to `main`: build the image, push to ECR tagged with the SHA (GitHub's OIDC provider assumes a deploy role: ECR push, `ecs:RegisterTaskDefinition`, `ecs:UpdateService`, `ecs:RunTask`, `iam:PassRole` on the two task roles, nothing else), run `php artisan migrate --force` as a one-off task from the new task definition and wait for it, then update `web`, `worker` and `reverb` and wait for `services-stable`.
 
-A scan that is mid-pipeline when the worker is replaced: ECS sends SIGTERM, Horizon stops taking jobs and finishes the current stage, and Fargate sends SIGKILL after `stopTimeout` (120 s at most). Most stages finish inside that; PHPStan on a large repository does not. The workspace is on the old task's disk, so the scan cannot resume on the new task either way. The worker's entrypoint therefore runs `php artisan sentinel:recover-interrupted` before Horizon starts: every scan still in a running status whose workspace does not exist on this task is marked failed with "interrupted by a deployment, please run it again" (or re-dispatched from the start, which is the same cost as the user pressing the button). No manual draining is needed; deploy when Horizon shows the scans queue empty if you would rather nobody notices.
+A scan that is mid-pipeline when the worker is replaced: ECS sends SIGTERM, Horizon stops taking jobs and finishes the current stage, and Fargate sends SIGKILL after `stopTimeout` (120 s at most). Most stages finish inside that; PHPStan on a large repository does not. The workspace is on the old task's disk, so the scan cannot resume on the new task either way. `php artisan sentinel:recover-interrupted` handles it: every scan still in a running status that nothing has touched for longer than a stage may run (`SENTINEL_JOB_TIMEOUT` plus two minutes; every stage updates the row when it starts) is marked failed with "interrupted by a deployment or worker restart, please run it again", and workspaces of finished or unknown scans are removed. It is scheduled every five minutes, so nothing is stuck for longer than about one stage timeout. With a single worker task, the entrypoint runs it with `--force` before Horizon starts, which fails every running scan immediately; never use `--force` with more than one worker task, since another task's scan would be failed under it. No manual draining is needed; deploy when Horizon shows the scans queue empty if you would rather nobody notices.
 
 ### Terraform layout
 
@@ -163,11 +164,11 @@ A GitHub App has one webhook URL and one setup URL, so the development app (webh
 | Item | Approx. USD / month |
 |---|---|
 | `web` 0.5 vCPU / 1 GB | 22 |
-| `worker` 1 vCPU / 2 GB | 43 |
+| `worker` 2 vCPU / 4 GB | 87 |
 | ALB + LCUs | 22 |
 | RDS db.t4g.micro + 20 GB | 16 |
 | ElastiCache cache.t4g.micro | 13 |
 | ECR, CloudWatch logs, Secrets Manager, Route 53 | 8 |
-| **Total** | **about 125 (about £95)** |
+| **Total** | **about 170 (about £130); about 125 with a 1 vCPU / 2 GB worker, which is enough below ~5,000 PHP files** |
 
 Graviton (arm64) task definitions take roughly 20% off the Fargate lines; a NAT gateway would add about 35; the Reverb service about 11. LLM spend is per scan and separate (see the cost figures in the scan reports).

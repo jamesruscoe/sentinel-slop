@@ -24,12 +24,20 @@ return [
     'stale_scan_minutes' => (int) env('SENTINEL_STALE_SCAN_MINUTES', 60),
 
     /*
-    | Fetch and preflight limits. Enforced while downloading, not afterwards.
+    | Fetch limits, enforced while the tarball is extracted and counted over
+    | analysable files only (skipped directories, non-analysed extensions and
+    | generated files are never written or counted). What bounds them is time,
+    | not memory: PHPStan and Pint each cost about 65 ms per PHP file, so the
+    | tool timeout below covers roughly 7,000 PHP files per tool, and a 12,000
+    | file repository (Filament is 6,500 analysable files) is rarely more PHP
+    | than that. Memory is about 34 KB per PHP file in the profile stage, which
+    | the 1G worker memory_limit covers many times over. Bytes follow files at
+    | 7-10 KB each.
     */
     'limits' => [
         'scans_per_user_per_hour' => (int) env('SENTINEL_SCANS_PER_USER_PER_HOUR', 10),
-        'max_total_bytes' => (int) env('SENTINEL_MAX_TOTAL_BYTES', 50 * 1024 * 1024),
-        'max_file_count' => (int) env('SENTINEL_MAX_FILE_COUNT', 5000),
+        'max_total_bytes' => (int) env('SENTINEL_MAX_TOTAL_BYTES', 150 * 1024 * 1024),
+        'max_file_count' => (int) env('SENTINEL_MAX_FILE_COUNT', 12000),
         'max_single_file_bytes' => (int) env('SENTINEL_MAX_SINGLE_FILE_BYTES', 1024 * 1024),
         // composer.lock / package-lock.json / yarn.lock / pnpm-lock.yaml are kept (they resolve imports exactly) up to this size.
         'max_lockfile_bytes' => (int) env('SENTINEL_MAX_LOCKFILE_BYTES', 8 * 1024 * 1024),
@@ -96,7 +104,9 @@ return [
     'queue' => [
         'connection' => env('SENTINEL_SCANS_QUEUE_CONNECTION', env('QUEUE_CONNECTION', 'redis')),
         'name' => env('SENTINEL_SCANS_QUEUE', 'scans'),
-        'job_timeout_seconds' => (int) env('SENTINEL_JOB_TIMEOUT', 900),
+        // One stage. The analysing stage runs every tool in turn: laravel/framework (3,100 PHP files) took 430 s on
+        // a laptop, so a 12,000-file repository on a 2 vCPU task needs the headroom. Redis retry_after follows it.
+        'job_timeout_seconds' => (int) env('SENTINEL_JOB_TIMEOUT', 2700),
     ],
 
     /*
@@ -128,8 +138,19 @@ return [
         'gitleaks' => env('SENTINEL_GITLEAKS_BINARY', 'gitleaks'),
         // Ruff (Python). A single binary: `pip install ruff` or the GitHub release; give the full path when it is not on PATH.
         'ruff' => env('SENTINEL_RUFF_BINARY', 'ruff'),
-        'timeout_seconds' => (int) env('SENTINEL_TOOL_TIMEOUT', 300),
-        'phpstan_memory_limit' => env('SENTINEL_PHPSTAN_MEMORY', '1G'),
+        // Pinned versions of the system binaries. sentinel:doctor reports a mismatch; sentinel:doctor --strict (the
+        // Docker build) fails on one, so a drifted tool is a red build rather than an unverified scan. PHPStan, Pint,
+        // ESLint and jscpd are pinned by composer.lock and package-lock.json and checked against those.
+        'gitleaks_version' => env('SENTINEL_GITLEAKS_VERSION', '8.30.1'),
+        'ruff_version' => env('SENTINEL_RUFF_VERSION', '0.16.8'),
+        // What sentinel:doctor --strict requires of the PHP running the worker: the extensions the app and Horizon
+        // need, and a memory_limit that fits a large repository (laravel/framework peaks around 150 MB; the CLI
+        // default of 128M killed the first scan of it).
+        'required_extensions' => ['zlib', 'mbstring', 'pdo_mysql', 'redis', 'pcntl', 'posix'],
+        'worker_memory_limit' => env('SENTINEL_WORKER_MEMORY_LIMIT', '1G'),
+        // Per tool. PHPStan and Pint each took about 205 s on 3,100 PHP files (laptop); 900 s covers ~7,000.
+        'timeout_seconds' => (int) env('SENTINEL_TOOL_TIMEOUT', 900),
+        'phpstan_memory_limit' => env('SENTINEL_PHPSTAN_MEMORY', '2G'),
     ],
 
     /*

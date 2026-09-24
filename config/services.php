@@ -39,6 +39,8 @@ return [
         'app_id' => env('GITHUB_APP_ID'),
         'app_slug' => env('GITHUB_APP_SLUG'),
         'private_key_path' => env('GITHUB_APP_PRIVATE_KEY_PATH'),
+        // The PEM itself (raw or base64-encoded), for environments that inject secrets as variables. Wins over the path.
+        'private_key' => env('GITHUB_APP_PRIVATE_KEY'),
         'webhook_secret' => env('GITHUB_APP_WEBHOOK_SECRET'),
     ],
 

@@ -9,3 +9,5 @@ Artisan::command('inspire', function () {
 })->purpose('Display an inspiring quote');
 
 Schedule::command('sentinel:prune')->daily();
+
+Schedule::command('sentinel:recover-interrupted')->everyFiveMinutes();

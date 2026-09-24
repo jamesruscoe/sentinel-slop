@@ -222,7 +222,7 @@ return [
             'maxJobs' => 0,
             'memory' => 512,
             'tries' => 1,
-            'timeout' => (int) env('SENTINEL_JOB_TIMEOUT', 900),
+            'timeout' => (int) env('SENTINEL_JOB_TIMEOUT', 2700),
             'nice' => 0,
         ],
     ],

@@ -27,7 +27,7 @@ abstract class ScanStageJob implements ShouldQueue
     {
         $this->onConnection((string) config('sentinel.queue.connection'));
         $this->onQueue((string) config('sentinel.queue.name'));
-        $this->timeout = (int) config('sentinel.queue.job_timeout_seconds', 900);
+        $this->timeout = (int) config('sentinel.queue.job_timeout_seconds', 2700);
     }
 
     /** The status this stage represents, or null for housekeeping jobs. */

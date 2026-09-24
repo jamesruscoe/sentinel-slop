@@ -19,11 +19,24 @@ final class GitHubAppJwt
     ) {}
 
     /**
-     * @param  array{app_id?: string|int|null, private_key_path?: string|null}  $config
+     * `private_key` is the PEM itself, or the PEM base64-encoded (a single line, the shape a
+     * secrets manager injects into an environment variable). It takes precedence over the path.
+     *
+     * @param  array{app_id?: string|int|null, private_key_path?: string|null, private_key?: string|null}  $config
      */
     public static function fromConfig(array $config): self
     {
-        return new self((string) ($config['app_id'] ?? ''), $config['private_key_path'] ?? null);
+        $key = $config['private_key'] ?? null;
+        $pem = null;
+        if (is_string($key) && trim($key) !== '') {
+            $decoded = str_contains($key, '-----BEGIN') ? trim($key) : base64_decode(trim($key), true);
+            if ($decoded === false || ! str_contains($decoded, '-----BEGIN')) {
+                throw new GitHubAppNotConfiguredException('GITHUB_APP_PRIVATE_KEY must be the PEM private key, raw or base64-encoded.');
+            }
+            $pem = $decoded;
+        }
+
+        return new self((string) ($config['app_id'] ?? ''), $config['private_key_path'] ?? null, $pem);
     }
 
     public function create(?int $now = null): string

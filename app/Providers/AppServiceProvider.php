@@ -38,7 +38,7 @@ class AppServiceProvider extends ServiceProvider
         $this->app->bind(GitHubAppApi::class, KnpGitHubAppApi::class);
 
         $this->app->bind(GitHubAppJwt::class, function (): GitHubAppJwt {
-            /** @var array{app_id?: string|int|null, private_key_path?: string|null} $config */
+            /** @var array{app_id?: string|int|null, private_key_path?: string|null, private_key?: string|null} $config */
             $config = config('services.github', []);
             $path = $config['private_key_path'] ?? null;
 
