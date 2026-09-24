@@ -186,6 +186,11 @@ module "worker" {
   # Fargate's maximum. Horizon finishes the current stage inside it when it can; otherwise the scan is
   # failed by sentinel:recover-interrupted at the next worker start.
   stop_timeout = 120
+  # Stop the old worker before starting the new one: two workers overlapping during a rolling deploy meant the
+  # new task's `recover-interrupted --force` failed the scan the old task was still running. The queue simply
+  # waits for the two minutes in between.
+  deployment_minimum_healthy_percent = 0
+  deployment_maximum_percent         = 100
 }
 
 module "scheduler" {

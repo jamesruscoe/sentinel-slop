@@ -56,8 +56,8 @@ resource "aws_ecs_service" "this" {
   desired_count   = var.desired_count
   launch_type     = "FARGATE"
 
-  deployment_minimum_healthy_percent = 100
-  deployment_maximum_percent         = 200
+  deployment_minimum_healthy_percent = var.deployment_minimum_healthy_percent
+  deployment_maximum_percent         = var.deployment_maximum_percent
 
   # ECS Exec: lets `aws ssm start-session` port-forward through a running task to RDS and Redis, which have
   # no public endpoint. Nothing inside the container changes; the agent is injected by Fargate.
@@ -165,6 +165,17 @@ variable "container_port" {
 variable "target_group_arn" {
   type    = string
   default = null
+}
+
+variable "deployment_minimum_healthy_percent" {
+  description = "100 with maximum 200 starts the new task before stopping the old (web). 0 with maximum 100 stops the old task first, for a role that must never run twice (the worker: a second worker's forced recovery fails the first one's scan)."
+  type        = number
+  default     = 100
+}
+
+variable "deployment_maximum_percent" {
+  type    = number
+  default = 200
 }
 
 variable "stop_timeout" {
