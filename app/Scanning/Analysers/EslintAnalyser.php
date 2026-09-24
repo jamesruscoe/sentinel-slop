@@ -48,7 +48,12 @@ final class EslintAnalyser extends ProcessAnalyser
         $findings = new FindingCollection;
         $repoRoot = rtrim(str_replace(chr(92), '/', $path), '/').'/';
 
-        foreach ($this->decodeJson($result->stdout, 'JSON output') as $file) {
+        // ESLint's JSON lists every file it linted, with or without messages.
+        $report = $this->decodeJson($result->stdout, 'JSON output');
+        // The extensions the bundled config's `files` pattern covers (.vue is not linted).
+        $this->assertCoverage($path, ['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'mts', 'cts'], count($report), '0 files linted');
+
+        foreach ($report as $file) {
             $name = str_replace(chr(92), '/', (string) ($file['filePath'] ?? ''));
             $relative = str_starts_with($name, $repoRoot) ? substr($name, strlen($repoRoot)) : $name;
 

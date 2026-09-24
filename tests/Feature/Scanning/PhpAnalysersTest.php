@@ -80,6 +80,21 @@ test('phpstan runs from a detached phar and never sees our own vendor symbols', 
     expect(implode("\n", $messages))->not->toContain('Illuminate'.chr(92))->not->toContain('Carbon'.chr(92))->not->toContain('Symfony'.chr(92));
 });
 
+test('$this inside a closure in a route file is framework-bound and not reported, the same code elsewhere is', function () {
+    $workspace = temporaryWorkspace();
+    file_put_contents($workspace->repoPath().'/composer.json', '{"require": {"laravel/framework": "^12.0"}, "autoload": {"psr-4": {"App\\\\": "app/"}}}');
+    @mkdir($workspace->repoPath().'/routes');
+    @mkdir($workspace->repoPath().'/app');
+    $closure = "Artisan::command('inspire', function () {\n    \$this->comment('Keep going');\n})->purpose('Display an inspiring quote');\n";
+    file_put_contents($workspace->repoPath().'/routes/console.php', "<?php\n\nuse Illuminate\\Support\\Facades\\Artisan;\n\n".$closure);
+    file_put_contents($workspace->repoPath().'/app/helpers.php', "<?php\n\nuse Illuminate\\Support\\Facades\\Artisan;\n\n".$closure);
+
+    $findings = app(PhpStanAnalyser::class)->run($workspace->repoPath());
+    $undefinedThis = array_map(fn (Finding $f) => $f->filePath, array_filter($findings->all(), fn (Finding $f) => $f->ruleId === 'variable.undefined' && str_contains($f->message, '$this')));
+
+    expect($undefinedThis)->toBe(['app/helpers.php']);
+});
+
 test('errors that only exist because a dependency is invisible are dropped, real ones stay', function () {
     $workspace = workspaceFromFixture('lockfile-deps');
     $findings = app(PhpStanAnalyser::class)->run($workspace->repoPath());

@@ -54,6 +54,7 @@
         </section>
     @else
         @include('scans.partials.summary')
+        @include('scans.partials.assessment')
         @include('scans.partials.prompts')
         @include('scans.partials.findings')
         @include('scans.partials.details')

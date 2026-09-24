@@ -11,6 +11,8 @@ use App\Scanning\Data\Stack;
 use App\Scanning\Enums\FindingCategory;
 use App\Scanning\Enums\Severity;
 use App\Scanning\Enums\TargetEditor;
+use App\Scanning\Profile\ProfileFormatter;
+use App\Scanning\Profile\RepositoryProfile;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Contracts\View\View;
 use Illuminate\Database\Eloquent\Collection;
@@ -43,6 +45,8 @@ class ScanShow extends Component
     public string $editor = 'claude_code';
 
     public bool $showPayload = false;
+
+    public bool $showProfile = false;
 
     public function mount(Scan $scan): void
     {
@@ -203,6 +207,7 @@ class ScanShow extends Component
             'targetEditor' => $this->targetEditor(),
             'rulesFile' => $complete ? $this->rulesFile() : null,
             'skipped' => $this->skipped(),
+            'profileText' => $complete && $this->scan->profile !== null ? ProfileFormatter::render(RepositoryProfile::fromArray($this->scan->profile)) : null,
             'hasCritical' => $complete && $this->scan->findings()->whereIn('category', [FindingCategory::Malware->value, FindingCategory::Secrets->value])->exists(),
             'models' => (array) config('sentinel.synthesis.models', []),
         ]);

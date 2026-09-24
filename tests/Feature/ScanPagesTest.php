@@ -85,6 +85,13 @@ test('the results page shows score, stack, prompts, rules, findings and the payl
         'detected_stack' => ['languages' => ['PHP' => 900, 'Blade' => 100], 'frameworks' => ['laravel'], 'versions' => ['laravel' => '^12.0', 'php' => '^8.3'], 'tooling' => ['pint']],
         'synthesis_payload' => ['system' => 'SYSTEM TEXT', 'user' => 'USER TEXT', 'model' => 'claude-sonnet-5', 'usage' => ['finish_reason' => 'stop', 'input_tokens' => 4000, 'output_tokens' => 3000]],
         'suppression_count' => 2, 'suppression_density' => 2.27,
+        'assessment' => [
+            'summary' => "The service layer carries the logic and the controllers stay thin.\n\nNothing in app/Services logs, so handled failures leave no trace.",
+            'strengths' => ['No secrets found'],
+            'structural_problems' => [['title' => 'No logging in app/Services', 'evidence' => '18 files, none logs', 'impact' => 'Failures are invisible']],
+            'recommended_refactors' => [['title' => 'Introduce an audit logger', 'rationale' => 'One way to log', 'scope' => 'app/Services', 'effort' => 'small']],
+        ],
+        'profile' => ['summary' => ['files' => 12, 'source_files' => 10, 'test_files' => 2, 'code_lines' => 500, 'comment_lines' => 20, 'comment_density' => 4.0, 'families' => ['php' => 10], 'assessed_families' => ['php'], 'unassessed_families' => [], 'max_depth' => 3, 'frameworks' => ['laravel']], 'areas' => [], 'observations' => ['PROFILE OBSERVATION TEXT']],
     ]);
     foreach ([1, 2, 3, 4, 5] as $phase) {
         Prompt::factory()->for($scan)->create(['phase' => $phase, 'title' => "Claude phase {$phase}", 'body' => "Claude body {$phase}"]);
@@ -96,6 +103,9 @@ test('the results page shows score, stack, prompts, rules, findings and the payl
 
     $page = $this->actingAs($user)->get(route('scans.show', $scan))->assertOk();
     $page->assertSee('64')->assertSee('laravel 12')->assertSee('PHP 8.3')
+        ->assertSee('Assessment')->assertSee('The service layer carries the logic')->assertSee('Nothing in app/Services logs')
+        ->assertSee('No logging in app/Services')->assertSee('18 files, none logs')->assertSee('Introduce an audit logger')->assertSee('No secrets found')
+        ->assertSee('Repository profile')->assertDontSee('PROFILE OBSERVATION TEXT')
         ->assertSee('Claude phase 1')->assertSee('Claude body 5')->assertDontSee('Cursor body 1')
         ->assertSee('CLAUDE.md')->assertSee('app/A.php:3 in App\A::total()')->assertSee('Undefined method total')
         ->assertSee('4,000 tokens in')->assertDontSee('USER TEXT');

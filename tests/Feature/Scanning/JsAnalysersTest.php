@@ -57,6 +57,22 @@ test('jscpd compares Vue single-file components whole, so page-level duplication
         ->and($findings->all()[0]->filePath)->not->toContain(':');
 });
 
+test('jscpd does not report the skeleton header every migration shares', function () {
+    $workspace = temporaryWorkspace();
+    @mkdir($workspace->repoPath().'/database/migrations', 0777, true);
+    @mkdir($workspace->repoPath().'/app', 0777, true);
+    $header = "<?php\n\nuse Illuminate\\Database\\Migrations\\Migration;\nuse Illuminate\\Database\\Schema\\Blueprint;\nuse Illuminate\\Support\\Facades\\Schema;\n\nreturn new class extends Migration\n{\n    public function up(): void\n    {\n        Schema::create('things', function (Blueprint \$table) {\n            \$table->id();\n            \$table->timestamps();\n        });\n    }\n\n    public function down(): void\n    {\n        Schema::dropIfExists('things');\n    }\n};\n";
+    file_put_contents($workspace->repoPath().'/database/migrations/0001_01_01_000000_create_a_table.php', $header);
+    file_put_contents($workspace->repoPath().'/database/migrations/0001_01_01_000001_create_b_table.php', $header);
+    // The same block outside migrations is still duplication, and keeps the analyser from seeing zero files.
+    file_put_contents($workspace->repoPath().'/app/A.php', $header);
+    file_put_contents($workspace->repoPath().'/app/B.php', $header);
+
+    $files = array_map(fn (Finding $f) => $f->filePath, app(JscpdAnalyser::class)->run($workspace->repoPath())->all());
+
+    expect($files)->toBe(['app/B.php']);
+});
+
 test('jscpd ignores every .gitignore, including one in a parent directory that excludes the workspace', function () {
     // Real scans live under storage/app/scans, which Sentinel Slop's own .gitignore excludes; jscpd 5 walks parent
     // .gitignore files and used to analyse nothing. A repository's own .gitignore must not hide files either.

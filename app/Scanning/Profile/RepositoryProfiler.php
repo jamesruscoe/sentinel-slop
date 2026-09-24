@@ -720,6 +720,7 @@ final class RepositoryProfiler
         };
 
         $lines = [];
+        $snippets = [];
         $pairs = [];
         $totalLines = 0;
         foreach ($jscpd as $finding) {
@@ -731,6 +732,11 @@ final class RepositoryProfiler
             $union($here, $there);
             $lines[$here] = max($lines[$here] ?? 0, (int) $m[1]);
             $lines[$there] = max($lines[$there] ?? 0, (int) $m[1]);
+            if ($finding->snippet !== null && $finding->snippet !== '') {
+                // The same fragment at every location: keep it once so the cluster finding can show the lines.
+                $snippets[$here] ??= $finding->snippet;
+                $snippets[$there] ??= $finding->snippet;
+            }
             $totalLines += (int) $m[1];
             $pairs[] = ['a' => $here, 'b' => $there, 'finding' => $finding];
         }
@@ -744,12 +750,21 @@ final class RepositoryProfiler
         foreach ($groups as $members) {
             sort($members);
             $block = max(array_map(fn (string $m) => $lines[$m], $members));
+            $snippet = null;
+            foreach ($members as $member) {
+                if (isset($snippets[$member])) {
+                    $snippet = $snippets[$member];
+
+                    break;
+                }
+            }
             $clusters[] = [
                 'occurrences' => count($members),
                 'lines' => $block,
                 'lines_saved' => $block * (count($members) - 1),
                 'files' => count(array_unique(array_map(fn (string $m) => explode(':', $m)[0], $members))),
                 'locations' => $members,
+                'snippet' => $snippet,
             ];
         }
         usort($clusters, fn (array $a, array $b) => [$b['lines_saved'], $b['occurrences']] <=> [$a['lines_saved'], $a['occurrences']]);

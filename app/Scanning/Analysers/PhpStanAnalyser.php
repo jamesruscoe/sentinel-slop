@@ -88,7 +88,7 @@ final class PhpStanAnalyser extends ProcessAnalyser
 
         // Pass 2: keep only what PHPStan could actually judge.
         foreach ($entries as $entry) {
-            if (self::judgesInvisibleType($entry['message'], $index) || self::followsFromInvisibleParent($entry['identifier'], $entry['message'], $invisibleParent)) {
+            if (self::judgesInvisibleType($entry['message'], $index) || self::followsFromInvisibleParent($entry['identifier'], $entry['message'], $invisibleParent) || self::isFrameworkBoundClosure($entry['identifier'], $entry['message'], $entry['file'])) {
                 continue;
             }
 
@@ -109,6 +109,16 @@ final class PhpStanAnalyser extends ProcessAnalyser
         }
 
         return $findings;
+    }
+
+    /**
+     * `$this` inside a closure in a route file: Artisan::command() and route
+     * registration bind the closure to a framework object, so the code is
+     * correct and PHPStan (without the framework loaded) cannot know it.
+     */
+    public static function isFrameworkBoundClosure(string $identifier, string $message, string $file): bool
+    {
+        return $identifier === 'variable.undefined' && str_contains($message, '$this') && (str_starts_with($file, 'routes/') || str_starts_with($file, 'app/Console/Kernel'));
     }
 
     private static function isUnknownSymbolError(string $identifier): bool

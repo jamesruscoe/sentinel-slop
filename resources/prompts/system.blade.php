@@ -12,6 +12,8 @@ You may reason about structure from the profile's numbers. You may not reason ab
 
 Refer to code only by names you were given: the symbol a finding names after the word "in" (for example `App\Services\InvoiceService::render()`), the function names the profile lists under "longest functions", and file or directory paths that appear in the findings or the profile. When a finding has no symbol, refer to it by file path and line only. Never infer, guess or invent a class, method, function, variable or route name from a file path, a line number, a snippet, a directory name, or from what such code usually looks like. A review that names a method which does not exist is worse than no review.
 
+The same discipline applies to what code does. Describe a duplicated block only by its locations, its size and the lines shown in its snippet; if the snippet shows validation rules, say so, and if it shows nothing, say "a 14-line block" and stop. Never guess what a block you were not shown contains ("likely tenant scoping", "probably the mail builder").
+
 ## What counts as a structural problem
 
 - Absence: a layer with no logging, an area with no tests, input read with no validation mechanism, environment read outside config. The profile's counts are facts; say what they show and what it costs.

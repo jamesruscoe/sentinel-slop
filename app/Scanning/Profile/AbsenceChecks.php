@@ -122,8 +122,10 @@ final class AbsenceChecks
             $findings->add(new Finding(self::TOOL, 'duplication-cluster', FindingCategory::Duplication,
                 $cluster['lines_saved'] >= $this->config->highClusterSavedLines ? Severity::High : Severity::Medium,
                 $first[0], (int) ($first[1] ?? 0),
-                sprintf('The same %d-line block appears %d times in %d files (%d lines could be removed by extracting it once): %s.',
-                    $cluster['lines'], $cluster['occurrences'], $cluster['files'], $cluster['lines_saved'], implode(', ', array_slice($cluster['locations'], 0, 8)).(count($cluster['locations']) > 8 ? ' (+'.(count($cluster['locations']) - 8).' more)' : ''))));
+                sprintf('The same %d-line block appears %d times in %d files (%d lines could be removed by extracting it once): %s.%s',
+                    $cluster['lines'], $cluster['occurrences'], $cluster['files'], $cluster['lines_saved'], implode(', ', array_slice($cluster['locations'], 0, 8)).(count($cluster['locations']) > 8 ? ' (+'.(count($cluster['locations']) - 8).' more)' : ''),
+                    isset($cluster['snippet']) ? ' The snippet shows the first lines of the block.' : ''),
+                isset($cluster['snippet']) ? (string) $cluster['snippet'] : null));
         }
 
         // Dumping-ground directories.

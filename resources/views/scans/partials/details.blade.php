@@ -1,4 +1,19 @@
 <section class="mb-8 space-y-4">
+    @if ($profileText !== null)
+        <div class="rounded-md border border-zinc-800">
+            <button type="button" wire:click="$toggle('showProfile')" class="flex w-full items-center justify-between px-4 py-3 text-left text-sm">
+                <span class="font-medium">Repository profile</span>
+                <span class="text-xs text-zinc-400">Structural facts from the file tree, no analyser involved · {{ $showProfile ? 'Hide' : 'Show' }}</span>
+            </button>
+            @if ($showProfile)
+                <div class="border-t border-zinc-800 px-4 py-3 text-xs">
+                    <p class="mb-3 text-zinc-400">Areas, sizes, per-area logging, error-handling and validation counts, feature spread, duplication clusters, test coverage, dependency usage and the observations the reviewer was given. This is the same text the model read.</p>
+                    <pre class="max-h-[32rem] overflow-auto whitespace-pre rounded bg-zinc-900 p-3 text-zinc-300">{{ $profileText }}</pre>
+                </div>
+            @endif
+        </div>
+    @endif
+
     @if ($scan->synthesis_payload)
         <div class="rounded-md border border-zinc-800">
             <button type="button" wire:click="$toggle('showPayload')" class="flex w-full items-center justify-between px-4 py-3 text-left text-sm">

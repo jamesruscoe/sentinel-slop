@@ -53,6 +53,17 @@ final class JscpdAnalyser extends ProcessAnalyser
         }
 
         $report = $this->readJsonFile($workDir.'/jscpd-report.json', 'its report');
+        // The formats in the bundled config plus the SFC extensions mapped above. jscpd only counts a file as a
+        // source once it clears minLines/minTokens, so only files comfortably above both are expected.
+        $this->assertCoverage($path, ['php', 'js', 'jsx', 'ts', 'tsx', 'py', 'vue', 'svelte'], (int) ($report['statistics']['total']['sources'] ?? 0), '0 source files scanned', function (string $absolute): bool {
+            $size = filesize($absolute);
+            if ($size === false || $size > 1024 * 1024) {
+                return false;
+            }
+            $contents = (string) file_get_contents($absolute);
+
+            return substr_count($contents, "\n") >= 12 && preg_match_all('/\w+|[^\s\w]/', $contents) >= 100;
+        });
         $findings = new FindingCollection;
         $root = rtrim(str_replace(chr(92), '/', $path), '/').'/';
         // jscpd reports Windows extended-length paths (the //?/ prefix once slashes are normalised); drop it before relativising.

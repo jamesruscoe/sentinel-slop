@@ -7,6 +7,6 @@
     "silent": true,
     "noSymlinks": true,
     "format": ["php", "javascript", "typescript", "jsx", "tsx", "python"],
-    "ignore": ["**/node_modules/**", "**/vendor/**", "**/dist/**", "**/build/**", "**/*.min.js", "**/*.blade.php"],
+    "ignore": ["**/node_modules/**", "**/vendor/**", "**/dist/**", "**/build/**", "**/*.min.js", "**/*.blade.php", "**/migrations/**"],
     "reporters": ["json"]
 }

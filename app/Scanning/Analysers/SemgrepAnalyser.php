@@ -38,6 +38,35 @@ final class SemgrepAnalyser extends ProcessAnalyser
         return true;
     }
 
+    /**
+     * The file extensions the bundled rules in this analyser's directory
+     * declare through `languages:`, so coverage is judged against what
+     * Semgrep could have scanned.
+     *
+     * @return list<string>
+     */
+    public function coveredExtensions(): array
+    {
+        $byLanguage = [
+            'php' => ['php'], 'javascript' => ['js', 'jsx', 'mjs', 'cjs'], 'typescript' => ['ts', 'tsx'], 'python' => ['py'], 'ruby' => ['rb'], 'go' => ['go'],
+            'java' => ['java'], 'kotlin' => ['kt'], 'csharp' => ['cs'], 'json' => ['json'], 'yaml' => ['yml', 'yaml'], 'bash' => ['sh'], 'rust' => ['rs'], 'swift' => ['swift'],
+        ];
+        $extensions = [];
+        foreach (glob($this->options->semgrepRulesPath.'/'.$this->rulesDirectory.'/*.y*ml') ?: [] as $file) {
+            $yaml = (string) file_get_contents($file);
+            preg_match_all('/languages:\s*\[([^\]]*)\]/', $yaml, $inline);
+            preg_match_all('/languages:\s*\n((?:\s*-\s*\S+\s*\n)+)/', $yaml, $block);
+            $names = implode(' ', [...$inline[1], ...array_map(fn (string $b) => str_replace('-', ' ', $b), $block[1])]);
+            foreach (preg_split('/[\s,]+/', strtolower($names)) ?: [] as $language) {
+                foreach ($byLanguage[$language] ?? [] as $extension) {
+                    $extensions[$extension] = true;
+                }
+            }
+        }
+
+        return array_keys($extensions);
+    }
+
     public function run(string $path): FindingCollection
     {
         $workDir = $this->workDir($path);
@@ -65,6 +94,9 @@ final class SemgrepAnalyser extends ProcessAnalyser
         }
 
         $report = $this->readJsonFile($output, 'its report');
+        // Semgrep scans only files in the languages the rules declare; the slop rules are JS/TS only, so a
+        // PHP-only repository legitimately reports zero paths for them.
+        $this->assertCoverage($path, $this->coveredExtensions(), count((array) ($report['paths']['scanned'] ?? [])), '0 paths scanned');
         $findings = new FindingCollection;
         $root = rtrim(str_replace(chr(92), '/', $path), '/').'/';
 
