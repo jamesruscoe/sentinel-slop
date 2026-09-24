@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Scanning\Profile;
 
+use App\Scanning\Heuristics\SourceFiles;
+
 /**
  * Renders a RepositoryProfile as plain text: the same rendering goes to the
  * CLI, the results page and (later) the reviewer's payload, so what a person
@@ -48,7 +50,10 @@ final class ProfileFormatter
         $dup = $d['duplication'] ?? [];
         $lines[] = sprintf('DUPLICATION: %d jscpd pairs, %s duplicated lines in total, %d clusters (%d reportable).', $dup['pairs'] ?? 0, number_format((int) ($dup['total_duplicated_lines'] ?? 0)), count((array) ($dup['clusters'] ?? [])), count((array) ($dup['reportable'] ?? [])));
         foreach ((array) ($dup['clusters'] ?? []) as $c) {
-            $lines[] = sprintf('  %d-line block x%d in %d files (%d lines saved): %s', $c['lines'], $c['occurrences'], $c['files'], $c['lines_saved'], implode(', ', array_slice((array) $c['locations'], 0, 5)).(count($c['locations']) > 5 ? ' (+'.(count($c['locations']) - 5).')' : ''));
+            $paths = array_map(fn (string $l) => explode(':', $l)[0], (array) $c['locations']);
+            $note = array_filter($paths, fn (string $p) => ! SourceFiles::isTemplateFile($p)) === [] ? ' [template variants: duplication by design, not a finding]'
+                : (array_filter($paths, fn (string $p) => ! Naming::isTestName($p)) === [] ? ' [test files only: a fixture, not a finding]' : '');
+            $lines[] = sprintf('  %d-line block x%d in %d files (%d lines saved): %s%s', $c['lines'], $c['occurrences'], $c['files'], $c['lines_saved'], implode(', ', array_slice((array) $c['locations'], 0, 5)).(count($c['locations']) > 5 ? ' (+'.(count($c['locations']) - 5).')' : ''), $note);
         }
         $lines[] = '';
 
