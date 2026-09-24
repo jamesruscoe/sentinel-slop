@@ -19,7 +19,6 @@ use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Gate;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
-use Livewire\Attributes\On;
 use Livewire\Attributes\Url;
 use Livewire\Component;
 use Livewire\WithPagination;
@@ -60,9 +59,22 @@ class ScanShow extends Component
 
     /**
      * Reverb pushes every stage change on the private scan channel; the
-     * Livewire Echo listener re-renders the component.
+     * Livewire Echo listener re-renders the component. The listener exists
+     * only when broadcasting is configured: with no window.Echo (production
+     * runs without Reverb) Livewire's Echo bridge aborts the component's
+     * setup and takes wire:poll down with it, so nothing updated at all.
+     *
+     * @return array<string, string>
      */
-    #[On('echo-private:scans.{scan.uuid},.scan.progressed')]
+    public function getListeners(): array
+    {
+        if (config('broadcasting.default', 'null') === 'null') {
+            return [];
+        }
+
+        return ["echo-private:scans.{$this->scan->uuid},.scan.progressed" => 'refreshScan'];
+    }
+
     public function refreshScan(): void
     {
         $this->scan->refresh();

@@ -79,6 +79,22 @@ test('the live page shows progress for an active scan and refreshes on broadcast
     $component->call('refreshScan')->assertSee('Fix-it prompts')->assertSee('82');
 });
 
+test('the Echo listener exists only when broadcasting is configured, so polling survives without Reverb', function () {
+    // Production runs without Reverb: with the listener declared and no window.Echo, Livewire aborted the
+    // component's setup ("You must pass your app key when you instantiate Pusher") and wire:poll never ran.
+    $user = User::factory()->create();
+    $scan = Scan::factory()->for(ownedRepository($user))->create(['status' => ScanStatus::Analysing]);
+
+    config()->set('broadcasting.default', 'null');
+    $without = Livewire::actingAs($user)->test(ScanShow::class, ['scan' => $scan]);
+    expect($without->instance()->getListeners())->toBe([]);
+    $without->assertSee('wire:poll', false);
+
+    config()->set('broadcasting.default', 'reverb');
+    $with = Livewire::actingAs($user)->test(ScanShow::class, ['scan' => $scan]);
+    expect($with->instance()->getListeners())->toBe(["echo-private:scans.{$scan->uuid},.scan.progressed" => 'refreshScan']);
+});
+
 test('the results page shows score, stack, prompts, rules, findings and the payload', function () {
     $user = User::factory()->create();
     $scan = Scan::factory()->for(ownedRepository($user))->complete(score: 64)->create([
