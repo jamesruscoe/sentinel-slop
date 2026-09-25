@@ -6,6 +6,23 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <meta name="theme-color" content="#07060d">
     <title>{{ isset($title) ? $title.' · '.config('app.name') : config('app.name') }}</title>
+    @php($description = 'Scan a GitHub repository for AI-generated slop, get a score, and paste phased fix-it prompts into Claude Code or Cursor. Your code is only read, never run.')
+    <meta name="description" content="{{ $description }}">
+    <link rel="icon" href="{{ asset('favicon.svg') }}" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="{{ asset('apple-touch-icon.png') }}">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="{{ config('app.name') }}">
+    <meta property="og:title" content="{{ isset($title) ? $title.' · '.config('app.name') : config('app.name').': find the AI slop in your repo' }}">
+    <meta property="og:description" content="{{ $description }}">
+    <meta property="og:url" content="{{ url()->current() }}">
+    <meta property="og:image" content="{{ asset('og-image.png') }}">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="Sentinel Slop: find the AI slop in your repo, get prompts that fix it.">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="{{ config('app.name') }}: find the AI slop in your repo">
+    <meta name="twitter:description" content="{{ $description }}">
+    <meta name="twitter:image" content="{{ asset('og-image.png') }}">
     @vite(['resources/css/app.css', 'resources/js/app.js'])
     {{ $head ?? '' }}
 </head>
