@@ -1,11 +1,16 @@
-<section class="mb-8 grid gap-4 md:grid-cols-3">
-    <div class="rounded-md border border-zinc-800 p-6">
-        <div class="text-xs uppercase tracking-wide text-zinc-500">Slop score</div>
-        <div class="mt-2 flex items-baseline gap-2">
-            <x-score-badge :score="$scan->slop_score" size="lg" />
-            <span class="text-zinc-500">/ 100</span>
+@php
+    $severityColours = ['critical' => 'bg-rose-500', 'high' => 'bg-orange-400', 'medium' => 'bg-amber-300', 'low' => 'bg-ink-500', 'info' => 'bg-ink-600'];
+    $findingTotal = array_sum($severityCounts);
+@endphp
+<section class="grid gap-4 lg:grid-cols-[1fr_1fr_1.25fr]">
+    <div class="surface relative overflow-hidden p-6">
+        <div class="pointer-events-none absolute -top-16 -right-16 h-48 w-48 rounded-full bg-violet-600/20 blur-3xl"></div>
+        <div class="eyebrow">Slop score</div>
+        <div class="mt-4 flex items-center gap-5">
+            <x-score-ring :score="$scan->slop_score" size="lg" />
+            <div class="text-sm text-ink-400">out of <span class="text-ink-200">100</span><br>higher is cleaner</div>
         </div>
-        <p class="mt-3 text-xs text-zinc-400">
+        <p class="mt-5 text-sm leading-relaxed text-ink-300">
             @if ($hasCritical)
                 Capped at {{ config('sentinel.score.critical_cap') }} because secrets or malware-like patterns were found.
             @elseif ($scan->slop_score >= 80)
@@ -18,49 +23,69 @@
         </p>
     </div>
 
-    <div class="rounded-md border border-zinc-800 p-6 text-sm">
-        <div class="text-xs uppercase tracking-wide text-zinc-500">Findings</div>
-        <dl class="mt-2 space-y-1">
+    <div class="surface p-6 text-sm">
+        <div class="flex items-baseline justify-between">
+            <div class="eyebrow">Findings</div>
+            <span class="text-2xl font-semibold tracking-tight text-white tabular-nums">{{ number_format($findingTotal) }}</span>
+        </div>
+        @if ($findingTotal > 0)
+            <div class="mt-4 flex h-2 gap-0.5 overflow-hidden rounded-full">
+                @foreach ($severityCounts as $severity => $count)
+                    @if ($count > 0)
+                        <div class="{{ $severityColours[$severity] ?? 'bg-ink-600' }}" style="flex: {{ max($count / $findingTotal, 0.02) }}"></div>
+                    @endif
+                @endforeach
+            </div>
+        @endif
+        <dl class="mt-4 space-y-2">
             @foreach ($severityCounts as $severity => $count)
                 @if ($count > 0)
-                    <div class="flex justify-between">
-                        <dt class="capitalize">{{ $severity }}</dt>
-                        <dd class="tabular-nums">{{ $count }}</dd>
+                    <div class="flex items-center justify-between">
+                        <dt class="flex items-center gap-2 capitalize text-ink-200"><span class="h-2 w-2 rounded-full {{ $severityColours[$severity] ?? 'bg-ink-600' }}"></span>{{ $severity }}</dt>
+                        <dd class="text-ink-200 tabular-nums">{{ $count }}</dd>
                     </div>
                 @endif
             @endforeach
-            <div class="flex justify-between border-t border-zinc-800 pt-1 text-zinc-400">
-                <dt>Lines of code</dt><dd class="tabular-nums">{{ number_format((int) $scan->lines_of_code) }}</dd>
+        </dl>
+        <dl class="mt-4 space-y-2 border-t border-white/[0.06] pt-4 text-ink-400">
+            <div class="flex justify-between">
+                <dt>Lines of code</dt><dd class="text-ink-300 tabular-nums">{{ number_format((int) $scan->lines_of_code) }}</dd>
             </div>
-            <div class="flex justify-between text-zinc-400">
-                <dt>Inline suppressions</dt><dd class="tabular-nums">{{ (int) $scan->suppression_count }} ({{ $scan->suppression_density ?? 0 }} / kloc)</dd>
+            <div class="flex justify-between">
+                <dt>Inline suppressions</dt><dd class="text-ink-300 tabular-nums">{{ (int) $scan->suppression_count }} ({{ $scan->suppression_density ?? 0 }} / kloc)</dd>
             </div>
         </dl>
     </div>
 
-    <div class="rounded-md border border-zinc-800 p-6 text-sm">
-        <div class="text-xs uppercase tracking-wide text-zinc-500">Stack</div>
-        <dl class="mt-2 space-y-1">
-            <div><dt class="inline text-zinc-400">Languages:</dt> <dd class="inline">{{ implode(', ', array_map(fn ($l, $p) => "{$l} {$p}%", array_keys($stack->languagePercentages()), $stack->languagePercentages())) ?: 'unknown' }}</dd></div>
-            <div><dt class="inline text-zinc-400">Frameworks:</dt> <dd class="inline">{{ $stack->describeFrameworks() ?: 'none detected' }}</dd></div>
+    <div class="surface p-6 text-sm">
+        <div class="eyebrow">Stack</div>
+        <div class="mt-4 flex flex-wrap gap-1.5">
+            @forelse ($stack->languagePercentages() as $language => $percent)
+                <span class="chip"><span class="text-ink-100">{{ $language }}</span> {{ $percent }}%</span>
+            @empty
+                <span class="text-ink-500">Languages unknown</span>
+            @endforelse
+        </div>
+        <dl class="mt-4 space-y-1.5">
+            <div><dt class="inline text-ink-400">Frameworks:</dt> <dd class="inline text-ink-200">{{ $stack->describeFrameworks() ?: 'none detected' }}</dd></div>
             @if ($stack->describeRuntimes() !== '')
-                <div><dt class="inline text-zinc-400">Runtimes:</dt> <dd class="inline">{{ $stack->describeRuntimes() }}</dd></div>
+                <div><dt class="inline text-ink-400">Runtimes:</dt> <dd class="inline text-ink-200">{{ $stack->describeRuntimes() }}</dd></div>
             @endif
-            <div><dt class="inline text-zinc-400">Tooling:</dt> <dd class="inline">{{ implode(', ', $stack->tooling) ?: 'none detected' }}</dd></div>
+            <div><dt class="inline text-ink-400">Tooling:</dt> <dd class="inline text-ink-200">{{ implode(', ', $stack->tooling) ?: 'none detected' }}</dd></div>
         </dl>
         @php($coverage = \App\Scanning\Analysers\LanguageCoverage::describe($stack, \App\Scanning\Analysers\AnalyserFailure::list($scan->analyser_failures)))
-        <dl class="mt-3 space-y-1 border-t border-zinc-800 pt-3 text-xs">
-            <div><dt class="inline text-zinc-400">Language analysers:</dt>
-                <dd class="inline">{{ implode('; ', array_map(fn ($lang, $tools) => "{$lang}: ".implode(', ', $tools), array_keys($coverage['analysed']), $coverage['analysed'])) ?: 'none for this stack' }}</dd></div>
+        <dl class="mt-4 space-y-2 border-t border-white/[0.06] pt-4 text-xs leading-relaxed">
+            <div><dt class="inline text-ink-400">Language analysers:</dt>
+                <dd class="inline text-ink-200">{{ implode('; ', array_map(fn ($lang, $tools) => "{$lang}: ".implode(', ', $tools), array_keys($coverage['analysed']), $coverage['analysed'])) ?: 'none for this stack' }}</dd></div>
             @foreach ($coverage['failed'] as $failed)
-                <div class="text-red-300"><dt class="inline">Did not run:</dt>
+                <div class="rounded-lg border border-rose-400/20 bg-rose-500/10 px-2.5 py-1.5 text-rose-200"><dt class="inline font-medium">Did not run:</dt>
                     <dd class="inline">{{ ucfirst($failed) }} Nothing it would have reported is in these findings, and the score does not account for it.</dd></div>
             @endforeach
             @if ($coverage['structural_only'] !== [])
-                <div class="text-amber-200"><dt class="inline">Structural analysis only:</dt>
+                <div class="rounded-lg border border-amber-400/20 bg-amber-500/10 px-2.5 py-1.5 text-amber-100"><dt class="inline font-medium">Structural analysis only:</dt>
                     <dd class="inline">{{ implode(', ', $coverage['structural_only']) }}. No line-level analyser for {{ count($coverage['structural_only']) === 1 ? 'this language' : 'these languages' }} yet; findings there come from the profile, duplication and secrets scanning.</dd></div>
             @endif
-            <div class="text-zinc-500">Every language: {{ implode(', ', $coverage['universal']) }}.</div>
+            <div class="text-ink-500">Every language: {{ implode(', ', $coverage['universal']) }}.</div>
         </dl>
     </div>
 </section>
