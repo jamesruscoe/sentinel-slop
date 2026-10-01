@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 #
-# Sentinel Slop production image. One image, four roles, chosen by CONTAINER_ROLE
-# (web | worker | scheduler | reverb) in docker/entrypoint.sh.
+# Sentinel Slop production image. One image, several roles, chosen by CONTAINER_ROLE
+# (all | web | worker | scheduler | reverb) in docker/entrypoint.sh. Production runs `all`.
 #
 # Everything an analyser needs is pinned here and nowhere else:
 #   PHP           the base image tag
@@ -110,6 +110,7 @@ COPY docker/php.ini "$PHP_INI_DIR/conf.d/99-sentinel.ini"
 COPY docker/php-fpm.conf /usr/local/etc/php-fpm.d/zz-sentinel.conf
 COPY docker/nginx.conf /etc/nginx/nginx.conf
 COPY docker/supervisord.conf /etc/supervisor/supervisord.conf
+COPY docker/supervisord-all.conf /etc/supervisor/supervisord-all.conf
 
 WORKDIR /var/www/html
 

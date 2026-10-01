@@ -1,9 +1,13 @@
-# VPC with two public and two private subnets across two AZs and no NAT gateway: tasks sit in the public
-# subnets with public IPs and a security group that admits only the ALB, and reach GitHub and the Anthropic
-# API directly. RDS and ElastiCache sit in the private subnets and need no route out.
+# VPC with two public subnets across two AZs and no NAT gateway, laid out as Dog Desk does it: the one task sits
+# in a public subnet with a public IP and a security group that admits only CloudFront's origin-facing addresses,
+# and reaches GitHub and the Anthropic API directly. EFS mount targets in the same subnets hold the database.
 
 data "aws_availability_zones" "available" {
   state = "available"
+}
+
+data "aws_ec2_managed_prefix_list" "cloudfront" {
+  name = "com.amazonaws.global.cloudfront.origin-facing"
 }
 
 locals {
@@ -35,16 +39,6 @@ resource "aws_subnet" "public" {
   tags = { Name = "${var.name}-public-${count.index}", Tier = "public" }
 }
 
-resource "aws_subnet" "private" {
-  count = 2
-
-  vpc_id            = aws_vpc.this.id
-  cidr_block        = cidrsubnet(var.cidr, 8, 10 + count.index)
-  availability_zone = local.azs[count.index]
-
-  tags = { Name = "${var.name}-private-${count.index}", Tier = "private" }
-}
-
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.this.id
 
@@ -63,45 +57,19 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
-resource "aws_security_group" "alb" {
-  name        = "${var.name}-alb"
-  description = "Internet to the load balancer"
-  vpc_id      = aws_vpc.this.id
-
-  ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = { Name = "${var.name}-alb" }
-}
-
 resource "aws_security_group" "tasks" {
   name        = "${var.name}-tasks"
+  # Description kept from the ALB era: changing it replaces the group.
   description = "ECS tasks: only the load balancer may reach the web port"
   vpc_id      = aws_vpc.this.id
 
+  # The task's public IP is the CloudFront origin. The managed prefix list keeps everyone else off it, which is
+  # also what lets nginx tell PHP that every request arrived over HTTPS.
   ingress {
     from_port       = 8080
     to_port         = 8080
     protocol        = "tcp"
-    security_groups = [aws_security_group.alb.id]
+    prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront.id]
   }
 
   egress {
@@ -114,32 +82,17 @@ resource "aws_security_group" "tasks" {
   tags = { Name = "${var.name}-tasks" }
 }
 
-resource "aws_security_group" "rds" {
-  name        = "${var.name}-rds"
-  description = "MySQL from the tasks only"
+resource "aws_security_group" "efs" {
+  name        = "${var.name}-efs"
+  description = "NFS from the task only"
   vpc_id      = aws_vpc.this.id
 
   ingress {
-    from_port       = 3306
-    to_port         = 3306
+    from_port       = 2049
+    to_port         = 2049
     protocol        = "tcp"
     security_groups = [aws_security_group.tasks.id]
   }
 
-  tags = { Name = "${var.name}-rds" }
-}
-
-resource "aws_security_group" "redis" {
-  name        = "${var.name}-redis"
-  description = "Redis from the tasks only"
-  vpc_id      = aws_vpc.this.id
-
-  ingress {
-    from_port       = 6379
-    to_port         = 6379
-    protocol        = "tcp"
-    security_groups = [aws_security_group.tasks.id]
-  }
-
-  tags = { Name = "${var.name}-redis" }
+  tags = { Name = "${var.name}-efs" }
 }

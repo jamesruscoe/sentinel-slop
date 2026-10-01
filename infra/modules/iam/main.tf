@@ -1,7 +1,7 @@
 # One execution role per service, scoped to that service's secrets, its log group and the image.
 # One empty task role shared by all: the application calls no AWS API at runtime.
 # One deploy role assumed by GitHub Actions through OIDC, allowed to push the image, register task
-# definitions, update the three services and run the migration task, and nothing else.
+# definitions and update the service, and nothing else (migrations run in the container at start).
 
 data "aws_caller_identity" "current" {}
 
@@ -157,17 +157,6 @@ data "aws_iam_policy_document" "deploy" {
   }
 
   statement {
-    sid       = "RunMigrationTask"
-    actions   = ["ecs:RunTask"]
-    resources = ["arn:aws:ecs:*:${data.aws_caller_identity.current.account_id}:task-definition/${var.name}-web:*"]
-    condition {
-      test     = "ArnEquals"
-      variable = "ecs:cluster"
-      values   = [var.cluster_arn]
-    }
-  }
-
-  statement {
     sid       = "WatchTasks"
     actions   = ["ecs:DescribeTasks", "ecs:ListTasks"]
     resources = ["*"]
@@ -190,7 +179,7 @@ data "aws_iam_policy_document" "deploy" {
   }
 
   statement {
-    sid       = "ReadMigrationLogs"
+    sid       = "ReadLogs"
     actions   = ["logs:GetLogEvents", "logs:DescribeLogStreams"]
     resources = [for arn in values(var.log_group_arns) : "${arn}:*"]
   }

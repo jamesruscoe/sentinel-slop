@@ -1,9 +1,13 @@
+# Sentinel Slop on the Dog Desk pattern: one Fargate Spot task running everything, SQLite on EFS, CloudFront in
+# front and a Lambda that points the origin record at the task. No load balancer, RDS or ElastiCache: those were
+# about $150 of a $180 month at the traffic this site has. README "Deployment" has the cost table.
+
 locals {
-  name     = "sentinel-slop-prod"
-  app_url  = "https://${var.domain_name}"
-  db_name  = "sentinel_slop"
-  db_user  = "sentinel"
-  services = ["web", "worker", "scheduler"]
+  name    = "sentinel-slop-prod"
+  app_url = "https://${var.domain_name}"
+  # The EFS access point is mounted here; the SQLite database is the one file that must survive a task.
+  data_path = "/mnt/data"
+  port      = 8080
 }
 
 module "network" {
@@ -19,71 +23,58 @@ module "ecr" {
   name = "sentinel-slop"
 }
 
-module "acm" {
-  source = "../../modules/acm"
-
-  domain_name      = var.domain_name
-  hosted_zone_name = var.hosted_zone_name
-}
-
-module "alb" {
-  source = "../../modules/alb"
+module "efs" {
+  source = "../../modules/efs"
 
   name              = local.name
-  vpc_id            = module.network.vpc_id
   subnet_ids        = module.network.public_subnet_ids
-  security_group_id = module.network.alb_security_group_id
-  certificate_arn   = module.acm.certificate_arn
+  security_group_id = module.network.efs_security_group_id
 }
 
-# Every secret lives in Secrets Manager under sentinel-slop/prod/<NAME>. Generated ones get a value here;
-# the external ones (GitHub App, Anthropic) are shells you fill in before the first deploy (README).
+module "cdn" {
+  source = "../../modules/cdn"
+
+  providers = {
+    aws           = aws
+    aws.us_east_1 = aws.us_east_1
+  }
+
+  name             = local.name
+  domain_name      = var.domain_name
+  hosted_zone_name = var.hosted_zone_name
+  origin_port      = local.port
+}
+
+# The A record used to alias the load balancer; it now aliases CloudFront (in-place update, no gap).
+moved {
+  from = aws_route53_record.site
+  to   = module.cdn.aws_route53_record.site["A"]
+}
+
+# Every secret lives in Secrets Manager under sentinel-slop/prod/<NAME>. APP_KEY is generated here; the external
+# ones (GitHub App, Anthropic) are shells you fill in before the first deploy (README).
 module "secrets" {
   source = "../../modules/secrets"
 
   prefix    = "sentinel-slop/prod"
-  generated = ["APP_KEY", "DB_PASSWORD"]
+  generated = ["APP_KEY"]
   external  = ["GITHUB_APP_CLIENT_SECRET", "GITHUB_APP_WEBHOOK_SECRET", "GITHUB_APP_PRIVATE_KEY", "ANTHROPIC_API_KEY"]
-}
-
-module "rds" {
-  source = "../../modules/rds"
-
-  name              = local.name
-  subnet_ids        = module.network.private_subnet_ids
-  security_group_id = module.network.rds_security_group_id
-  instance_class    = var.db_instance_class
-  db_name           = local.db_name
-  username          = local.db_user
-  password          = module.secrets.generated_values["DB_PASSWORD"]
-}
-
-module "redis" {
-  source = "../../modules/redis"
-
-  name              = local.name
-  subnet_ids        = module.network.private_subnet_ids
-  security_group_id = module.network.redis_security_group_id
-  node_type         = var.redis_node_type
-  engine_version    = var.redis_engine_version
 }
 
 module "cluster" {
   source = "../../modules/ecs-cluster"
 
   name     = local.name
-  services = local.services
+  services = ["app"]
 }
 
-# Which secrets each service may read. The web tier handles login and webhooks and, on /github/setup, claims an
-# installation and syncs its repositories, which mints an installation token (the private key); the worker mints
-# tokens for scans and calls the LLM; the scheduler only needs the database. Nothing else is granted.
-locals {
-  service_secrets = {
-    web       = ["APP_KEY", "DB_PASSWORD", "GITHUB_APP_CLIENT_SECRET", "GITHUB_APP_WEBHOOK_SECRET", "GITHUB_APP_PRIVATE_KEY"]
-    worker    = ["APP_KEY", "DB_PASSWORD", "GITHUB_APP_PRIVATE_KEY", "ANTHROPIC_API_KEY"]
-    scheduler = ["APP_KEY", "DB_PASSWORD"]
-  }
+module "origin_dns" {
+  source = "../../modules/origin-dns"
+
+  name           = local.name
+  cluster_arn    = module.cluster.cluster_arn
+  hosted_zone_id = module.cdn.hosted_zone_id
+  record_name    = module.cdn.origin_fqdn
 }
 
 module "iam" {
@@ -94,33 +85,29 @@ module "iam" {
   log_group_arns     = module.cluster.log_group_arns
   cluster_arn        = module.cluster.cluster_arn
   service_secret_arns = {
-    for service, names in local.service_secrets : service => [for n in names : module.secrets.arns[n]]
+    app = values(module.secrets.arns)
   }
   github_repository    = var.github_repository
   github_owner_id      = var.github_owner_id
   github_repository_id = var.github_repository_id
 }
 
-# Non-secret environment shared by every role. Secrets are injected by ECS from the ARNs above.
+# Non-secret environment. Secrets are injected by ECS from the ARNs above.
 locals {
-  common_environment = {
-    APP_NAME                         = "Sentinel Slop"
-    APP_ENV                          = "production"
-    APP_DEBUG                        = "false"
-    APP_URL                          = local.app_url
-    LOG_CHANNEL                      = "stderr"
-    LOG_LEVEL                        = "info"
-    TRUSTED_PROXIES                  = var.vpc_cidr
-    DB_CONNECTION                    = "mysql"
-    DB_HOST                          = module.rds.address
-    DB_PORT                          = "3306"
-    DB_DATABASE                      = local.db_name
-    DB_USERNAME                      = local.db_user
-    REDIS_CLIENT                     = "phpredis"
-    REDIS_HOST                       = module.redis.address
-    REDIS_PORT                       = "6379"
-    CACHE_STORE                      = "redis"
-    QUEUE_CONNECTION                 = "redis"
+  environment = {
+    APP_NAME    = "Sentinel Slop"
+    APP_ENV     = "production"
+    APP_DEBUG   = "false"
+    APP_URL     = local.app_url
+    LOG_CHANNEL = "stderr"
+    LOG_LEVEL   = "info"
+    # Only CloudFront can reach the task (security group), so its X-Forwarded-For is trusted.
+    TRUSTED_PROXIES                  = "*"
+    DB_CONNECTION                    = "sqlite"
+    DB_DATABASE                      = "${local.data_path}/database.sqlite"
+    DB_BUSY_TIMEOUT                  = "15000"
+    CACHE_STORE                      = "file"
+    QUEUE_CONNECTION                 = "database"
     SESSION_DRIVER                   = "database"
     SESSION_SECURE_COOKIE            = "true"
     BROADCAST_CONNECTION             = "null"
@@ -134,99 +121,35 @@ locals {
     SENTINEL_ADMIN_GITHUB_USERNAMES  = var.admin_github_usernames
     SENTINEL_SCANS_PER_USER_PER_HOUR = tostring(var.scans_per_user_per_hour)
     SENTINEL_SYNTHESIS_DAILY_CAP     = tostring(var.synthesis_daily_cap)
-    SENTINEL_SCAN_WORKERS            = "1"
     SENTINEL_SOLE_WORKER             = "true"
     SENTINEL_SCAN_STORAGE_PATH       = "/tmp/sentinel/scans"
   }
-  image = "${module.ecr.repository_url}:${var.image_tag}"
 }
 
-module "web" {
+module "app" {
   source = "../../modules/ecs-service"
 
-  name               = "${local.name}-web"
-  role               = "web"
-  cluster_id         = module.cluster.cluster_id
-  image              = local.image
-  cpu                = var.web_cpu
-  memory             = var.web_memory
-  architecture       = var.architecture
-  desired_count      = 1
-  subnet_ids         = module.network.public_subnet_ids
-  security_group_ids = [module.network.tasks_security_group_id]
-  execution_role_arn = module.iam.execution_role_arns["web"]
-  task_role_arn      = module.iam.task_role_arn
-  log_group_name     = module.cluster.log_group_names["web"]
-  region             = var.region
-  environment        = local.common_environment
-  secrets            = { for n in local.service_secrets.web : n => module.secrets.arns[n] }
-  container_port     = 8080
-  target_group_arn   = module.alb.target_group_arn
-  depends_on         = [module.alb]
-}
+  name                = "${local.name}-app"
+  role                = "all"
+  cluster_id          = module.cluster.cluster_id
+  image               = "${module.ecr.repository_url}:${var.image_tag}"
+  cpu                 = var.app_cpu
+  memory              = var.app_memory
+  architecture        = var.architecture
+  desired_count       = 1
+  subnet_ids          = module.network.public_subnet_ids
+  security_group_ids  = [module.network.tasks_security_group_id]
+  execution_role_arn  = module.iam.execution_role_arns["app"]
+  task_role_arn       = module.iam.task_role_arn
+  log_group_name      = module.cluster.log_group_names["app"]
+  region              = var.region
+  environment         = local.environment
+  secrets             = module.secrets.arns
+  container_port      = local.port
+  efs_file_system_id  = module.efs.file_system_id
+  efs_access_point_id = module.efs.access_point_id
+  efs_mount_path      = local.data_path
 
-module "worker" {
-  source = "../../modules/ecs-service"
-
-  name               = "${local.name}-worker"
-  role               = "worker"
-  cluster_id         = module.cluster.cluster_id
-  image              = local.image
-  cpu                = var.worker_cpu
-  memory             = var.worker_memory
-  architecture       = var.architecture
-  desired_count      = 1
-  subnet_ids         = module.network.public_subnet_ids
-  security_group_ids = [module.network.tasks_security_group_id]
-  execution_role_arn = module.iam.execution_role_arns["worker"]
-  task_role_arn      = module.iam.task_role_arn
-  log_group_name     = module.cluster.log_group_names["worker"]
-  region             = var.region
-  environment        = local.common_environment
-  secrets            = { for n in local.service_secrets.worker : n => module.secrets.arns[n] }
-  # Fargate's maximum. Horizon finishes the current stage inside it when it can; otherwise the scan is
-  # failed by sentinel:recover-interrupted at the next worker start.
-  stop_timeout = 120
-  # Stop the old worker before starting the new one: two workers overlapping during a rolling deploy meant the
-  # new task's `recover-interrupted --force` failed the scan the old task was still running. The queue simply
-  # waits for the two minutes in between.
-  deployment_minimum_healthy_percent = 0
-  deployment_maximum_percent         = 100
-}
-
-module "scheduler" {
-  source = "../../modules/ecs-service"
-
-  name               = "${local.name}-scheduler"
-  role               = "scheduler"
-  cluster_id         = module.cluster.cluster_id
-  image              = local.image
-  cpu                = var.scheduler_cpu
-  memory             = var.scheduler_memory
-  architecture       = var.architecture
-  desired_count      = 1
-  subnet_ids         = module.network.public_subnet_ids
-  security_group_ids = [module.network.tasks_security_group_id]
-  execution_role_arn = module.iam.execution_role_arns["scheduler"]
-  task_role_arn      = module.iam.task_role_arn
-  log_group_name     = module.cluster.log_group_names["scheduler"]
-  region             = var.region
-  environment        = local.common_environment
-  secrets            = { for n in local.service_secrets.scheduler : n => module.secrets.arns[n] }
-}
-
-data "aws_route53_zone" "this" {
-  name = var.hosted_zone_name
-}
-
-resource "aws_route53_record" "site" {
-  zone_id = data.aws_route53_zone.this.zone_id
-  name    = var.domain_name
-  type    = "A"
-
-  alias {
-    name                   = module.alb.dns_name
-    zone_id                = module.alb.zone_id
-    evaluate_target_health = true
-  }
+  # The Lambda must exist before the first task reaches RUNNING, or the origin record keeps its placeholder.
+  depends_on = [module.efs, module.origin_dns]
 }

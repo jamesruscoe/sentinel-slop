@@ -1,5 +1,6 @@
-# A Fargate service running the Sentinel Slop image in one role. The task definition Terraform registers
-# carries the bootstrap image tag; the deploy pipeline registers new revisions with the commit SHA and
+# The one Fargate Spot service running the whole of Sentinel Slop (CONTAINER_ROLE=all: nginx, php-fpm, both queue
+# workers and the scheduler under supervisord), with the SQLite database on EFS. The task definition Terraform
+# registers carries the image_tag it is given; the deploy pipeline registers new revisions with the commit SHA and
 # updates the service, so the service's task_definition is ignored here after creation.
 
 locals {
@@ -13,9 +14,14 @@ locals {
     environment = local.environment
     secrets     = local.secrets
     stopTimeout = var.stop_timeout
-    portMappings = var.container_port == null ? [] : [{
+    portMappings = [{
       containerPort = var.container_port
       protocol      = "tcp"
+    }]
+    mountPoints = [{
+      sourceVolume  = "data"
+      containerPath = var.efs_mount_path
+      readOnly      = false
     }]
     logConfiguration = {
       logDriver = "awslogs"
@@ -46,21 +52,41 @@ resource "aws_ecs_task_definition" "this" {
     size_in_gib = 21
   }
 
+  volume {
+    name = "data"
+
+    efs_volume_configuration {
+      file_system_id     = var.efs_file_system_id
+      transit_encryption = "ENABLED"
+
+      authorization_config {
+        access_point_id = var.efs_access_point_id
+        iam             = "DISABLED"
+      }
+    }
+  }
+
   container_definitions = jsonencode([local.container])
 }
 
 resource "aws_ecs_service" "this" {
-  name            = var.name
-  cluster         = var.cluster_id
-  task_definition = aws_ecs_task_definition.this.arn
-  desired_count   = var.desired_count
-  launch_type     = "FARGATE"
+  name             = var.name
+  cluster          = var.cluster_id
+  task_definition  = aws_ecs_task_definition.this.arn
+  desired_count    = var.desired_count
+  platform_version = "1.4.0"
 
-  deployment_minimum_healthy_percent = var.deployment_minimum_healthy_percent
-  deployment_maximum_percent         = var.deployment_maximum_percent
+  capacity_provider_strategy {
+    capacity_provider = "FARGATE_SPOT"
+    weight            = 1
+  }
 
-  # ECS Exec: lets `aws ssm start-session` port-forward through a running task to RDS and Redis, which have
-  # no public endpoint. Nothing inside the container changes; the agent is injected by Fargate.
+  # Stop the old task before starting the new one. Two tasks must never overlap: SQLite on EFS has one writer, and
+  # the new task's `recover-interrupted --force` would fail a scan the old one was still running.
+  deployment_minimum_healthy_percent = 0
+  deployment_maximum_percent         = 100
+
+  # ECS Exec: `aws ecs execute-command` opens a shell in the running task (sqlite3, artisan tinker).
   enable_execute_command = true
 
   deployment_circuit_breaker {
@@ -74,18 +100,6 @@ resource "aws_ecs_service" "this" {
     assign_public_ip = true
   }
 
-  dynamic "load_balancer" {
-    for_each = var.target_group_arn == null ? [] : [var.target_group_arn]
-
-    content {
-      target_group_arn = load_balancer.value
-      container_name   = var.role
-      container_port   = var.container_port
-    }
-  }
-
-  health_check_grace_period_seconds = var.target_group_arn == null ? null : 60
-
   lifecycle {
     ignore_changes = [task_definition]
   }
@@ -96,7 +110,7 @@ variable "name" {
 }
 
 variable "role" {
-  description = "web | worker | scheduler | reverb, passed to the image as CONTAINER_ROLE"
+  description = "Passed to the image as CONTAINER_ROLE; `all` runs everything in one container."
   type        = string
 }
 
@@ -158,30 +172,25 @@ variable "secrets" {
 }
 
 variable "container_port" {
-  type    = number
-  default = null
+  type = number
 }
 
-variable "target_group_arn" {
-  type    = string
-  default = null
+variable "efs_file_system_id" {
+  type = string
 }
 
-variable "deployment_minimum_healthy_percent" {
-  description = "100 with maximum 200 starts the new task before stopping the old (web). 0 with maximum 100 stops the old task first, for a role that must never run twice (the worker: a second worker's forced recovery fails the first one's scan)."
-  type        = number
-  default     = 100
+variable "efs_access_point_id" {
+  type = string
 }
 
-variable "deployment_maximum_percent" {
-  type    = number
-  default = 200
+variable "efs_mount_path" {
+  type = string
 }
 
 variable "stop_timeout" {
-  description = "Seconds between SIGTERM and SIGKILL (Fargate allows at most 120)."
+  description = "Seconds between SIGTERM and SIGKILL (Fargate allows at most 120; Spot gives two minutes' notice)."
   type        = number
-  default     = 30
+  default     = 120
 }
 
 output "service_name" {

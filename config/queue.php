@@ -40,7 +40,9 @@ return [
             'connection' => env('DB_QUEUE_CONNECTION'),
             'table' => env('DB_QUEUE_TABLE', 'jobs'),
             'queue' => env('DB_QUEUE', 'default'),
-            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 90),
+            // Must exceed the longest job timeout on this connection (scan stages: sentinel.queue.job_timeout_seconds),
+            // or a stage still running is handed out again. Production runs the scan pipeline on this connection.
+            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', (int) env('SENTINEL_JOB_TIMEOUT', 2700) + 60),
             'after_commit' => false,
         ],
 

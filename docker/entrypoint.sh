@@ -1,5 +1,7 @@
 #!/bin/sh
-# One image, four roles. CONTAINER_ROLE selects what this container runs:
+# One image, several roles. CONTAINER_ROLE selects what this container runs:
+#   all        production: migrations, interrupted-scan recovery, then php-fpm, nginx, a scans worker, a default
+#              worker and the scheduler under supervisord, in the one Fargate Spot task (the Dog Desk layout)
 #   web        php-fpm + nginx under supervisord (port 8080)
 #   worker     Horizon on the scans and default queues, after recovering interrupted scans
 #   scheduler  the Laravel scheduler (sentinel:prune daily, sentinel:recover-interrupted every five minutes)
@@ -19,6 +21,17 @@ gosu www-data php artisan config:cache --no-ansi >/dev/null
 gosu www-data php artisan route:cache --no-ansi >/dev/null
 
 case "${CONTAINER_ROLE:-web}" in
+    all)
+        # SQLite lives on EFS. The access point already makes every write www-data; the deploy stops the old
+        # task before starting this one, so nothing else holds the file while migrations run.
+        if [ "${DB_CONNECTION:-}" = "sqlite" ] && [ -n "${DB_DATABASE:-}" ] && [ ! -f "$DB_DATABASE" ]; then
+            gosu www-data touch "$DB_DATABASE"
+        fi
+        gosu www-data php artisan migrate --force --no-interaction --no-ansi
+        # The only worker: anything still running at start was ours and died with the previous task.
+        gosu www-data php artisan sentinel:recover-interrupted --force --no-ansi
+        exec supervisord -c /etc/supervisor/supervisord-all.conf
+        ;;
     web)
         exec supervisord -c /etc/supervisor/supervisord.conf
         ;;

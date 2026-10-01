@@ -2,8 +2,8 @@ output "site_url" {
   value = local.app_url
 }
 
-output "alb_dns_name" {
-  value = module.alb.dns_name
+output "cloudfront_domain_name" {
+  value = module.cdn.distribution_domain_name
 }
 
 output "ecr_repository_url" {
@@ -14,20 +14,12 @@ output "cluster_name" {
   value = module.cluster.cluster_name
 }
 
-output "service_names" {
-  value = {
-    web       = module.web.service_name
-    worker    = module.worker.service_name
-    scheduler = module.scheduler.service_name
-  }
+output "service_name" {
+  value = module.app.service_name
 }
 
-output "task_families" {
-  value = {
-    web       = module.web.task_family
-    worker    = module.worker.task_family
-    scheduler = module.scheduler.task_family
-  }
+output "task_family" {
+  value = module.app.task_family
 }
 
 output "deploy_role_arn" {
@@ -40,19 +32,6 @@ output "secret_arns" {
   value       = module.secrets.arns
 }
 
-output "db_address" {
-  value = module.rds.address
-}
-
-output "redis_address" {
-  value = module.redis.address
-}
-
-output "public_subnet_ids" {
-  description = "The deploy pipeline runs the migration task here."
-  value       = module.network.public_subnet_ids
-}
-
-output "tasks_security_group_id" {
-  value = module.network.tasks_security_group_id
+output "efs_file_system_id" {
+  value = module.efs.file_system_id
 }

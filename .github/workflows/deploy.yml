@@ -5,14 +5,12 @@
 #         pull request and needs no AWS access.
 # push    (main only, after test) builds the `runtime` target from the same cache and pushes it to ECR
 #         tagged with the commit SHA. Nothing reaches ECR that failed a test: the job depends on it.
-# deploy  (main only, after push) registers a task-definition revision per service pointing at the new
-#         image, runs the migrations as a one-off task from the web revision and waits for it to exit 0,
-#         then updates the three services and waits for them to stabilise.
+# deploy  (main only, after push) registers a task-definition revision pointing at the new image and
+#         updates the one service. The old task stops before the new one starts (SQLite has one writer); the
+#         new task runs the migrations before it serves anything.
 #
-# Repository variables (Settings → Secrets and variables → Actions → Variables), from `terraform output`:
+# Repository variable (Settings → Secrets and variables → Actions → Variables), from `terraform output`:
 #   AWS_DEPLOY_ROLE_ARN        deploy_role_arn
-#   ECS_SUBNET_IDS             public_subnet_ids, comma-separated
-#   ECS_TASKS_SECURITY_GROUP   tasks_security_group_id
 # Everything else is a name the Terraform fixes.
 
 name: Deploy
@@ -36,7 +34,8 @@ env:
   AWS_REGION: eu-west-2
   ECR_REPOSITORY: sentinel-slop
   ECS_CLUSTER: sentinel-slop-prod
-  TASK_FAMILY_PREFIX: sentinel-slop-prod
+  ECS_SERVICE: sentinel-slop-prod-app
+  TASK_FAMILY: sentinel-slop-prod-app
 
 jobs:
   test:
@@ -96,7 +95,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   deploy:
-    name: Migrate and roll the services
+    name: Roll the service
     needs: push
     runs-on: ubuntu-latest
     env:
@@ -107,46 +106,23 @@ jobs:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Register a task-definition revision per service with the new image
+      - name: Register a task-definition revision with the new image
         id: register
         run: |
           set -euo pipefail
-          for service in web worker scheduler; do
-            family="${TASK_FAMILY_PREFIX}-${service}"
-            aws ecs describe-task-definition --task-definition "$family" --query taskDefinition \
-              | jq --arg image "$IMAGE" '
-                  .containerDefinitions[0].image = $image
-                  | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities,
-                        .registeredAt, .registeredBy, .deregisteredAt)' > "/tmp/${service}.json"
-            arn=$(aws ecs register-task-definition --cli-input-json "file:///tmp/${service}.json" --query taskDefinition.taskDefinitionArn --output text)
-            echo "${service}=${arn}" >> "$GITHUB_OUTPUT"
-            echo "registered ${arn}"
-          done
+          aws ecs describe-task-definition --task-definition "$TASK_FAMILY" --query taskDefinition             | jq --arg image "$IMAGE" '
+                .containerDefinitions[0].image = $image
+                | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities,
+                      .registeredAt, .registeredBy, .deregisteredAt)' > /tmp/app.json
+          arn=$(aws ecs register-task-definition --cli-input-json file:///tmp/app.json --query taskDefinition.taskDefinitionArn --output text)
+          echo "arn=${arn}" >> "$GITHUB_OUTPUT"
+          echo "registered ${arn}"
 
-      - name: Run the migrations as a one-off task from the new web revision
+      # The new task migrates before supervisord starts anything; a failed migration stops the task and the
+      # circuit breaker rolls the service back to the previous revision.
+      - name: Update the service and wait for it to stabilise
         run: |
           set -euo pipefail
-          task=$(aws ecs run-task \
-            --cluster "$ECS_CLUSTER" \
-            --launch-type FARGATE \
-            --task-definition "${{ steps.register.outputs.web }}" \
-            --network-configuration "awsvpcConfiguration={subnets=[${{ vars.ECS_SUBNET_IDS }}],securityGroups=[${{ vars.ECS_TASKS_SECURITY_GROUP }}],assignPublicIp=ENABLED}" \
-            --overrides '{"containerOverrides":[{"name":"web","command":["php","artisan","migrate","--force","--no-interaction"],"environment":[{"name":"CONTAINER_ROLE","value":"migrate"}]}]}' \
-            --query 'tasks[0].taskArn' --output text)
-          echo "migration task ${task}"
-          aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$task"
-          exit_code=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$task" --query 'tasks[0].containers[0].exitCode' --output text)
-          reason=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$task" --query 'tasks[0].stoppedReason' --output text)
-          echo "migration exit ${exit_code} (${reason})"
-          task_id="${task##*/}"
-          aws logs get-log-events --log-group-name "/ecs/${ECS_CLUSTER}/web" --log-stream-name "web/web/${task_id}" --query 'events[].message' --output text || true
-          test "$exit_code" = "0"
-
-      - name: Update the services and wait for them to stabilise
-        run: |
-          set -euo pipefail
-          aws ecs update-service --cluster "$ECS_CLUSTER" --service "${TASK_FAMILY_PREFIX}-web"       --task-definition "${{ steps.register.outputs.web }}"       --query 'service.serviceName' --output text
-          aws ecs update-service --cluster "$ECS_CLUSTER" --service "${TASK_FAMILY_PREFIX}-worker"    --task-definition "${{ steps.register.outputs.worker }}"    --query 'service.serviceName' --output text
-          aws ecs update-service --cluster "$ECS_CLUSTER" --service "${TASK_FAMILY_PREFIX}-scheduler" --task-definition "${{ steps.register.outputs.scheduler }}" --query 'service.serviceName' --output text
-          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "${TASK_FAMILY_PREFIX}-web" "${TASK_FAMILY_PREFIX}-worker" "${TASK_FAMILY_PREFIX}-scheduler"
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "${{ steps.register.outputs.arn }}" --query 'service.serviceName' --output text
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
           echo "deployed ${IMAGE}"

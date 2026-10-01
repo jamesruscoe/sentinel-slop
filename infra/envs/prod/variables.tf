@@ -33,7 +33,7 @@ variable "github_repository_id" {
 }
 
 variable "image_tag" {
-  description = "Image tag the task definitions start on. The deploy pipeline registers new revisions with the commit SHA; Terraform ignores those (lifecycle)."
+  description = "Image tag the task definition starts on. The deploy pipeline registers new revisions with the commit SHA; Terraform ignores those (lifecycle)."
   type        = string
   default     = "bootstrap"
 }
@@ -49,51 +49,16 @@ variable "architecture" {
   default     = "X86_64"
 }
 
-variable "db_instance_class" {
-  type    = string
-  default = "db.t4g.micro"
-}
-
-variable "redis_node_type" {
-  type    = string
-  default = "cache.t4g.micro"
-}
-
-variable "redis_engine_version" {
-  description = "Redis OSS major.minor for a single-node ElastiCache cluster (Valkey needs a replication group)."
-  type        = string
-  default     = "7.1"
-}
-
-variable "web_cpu" {
-  type    = number
-  default = 512
-}
-
-variable "web_memory" {
-  type    = number
-  default = 1024
-}
-
-variable "worker_cpu" {
-  description = "2 vCPU: PHPStan and Pint each take about 65 ms per PHP file on one core; a 12,000-file repository needs the headroom."
+variable "app_cpu" {
+  description = "1 vCPU on Fargate Spot (~$10/month). PHPStan and Pint take about 65 ms per PHP file each on one core, so the 900 s tool timeout covers a few thousand PHP files; a larger repository loses the tool that timed out, not the scan."
   type        = number
-  default     = 2048
+  default     = 1024
 }
 
-variable "worker_memory" {
-  type    = number
-  default = 4096
-}
-
-variable "scheduler_cpu" {
-  type    = number
-  default = 256
-}
-
-variable "scheduler_memory" {
-  type    = number
-  default = 512
+variable "app_memory" {
+  description = "nginx, php-fpm, two queue workers and the scheduler share this; a scan of laravel/framework peaks around 150 MB of PHP plus Semgrep."
+  type        = number
+  default     = 3072
 }
 
 variable "github_app_id" {
