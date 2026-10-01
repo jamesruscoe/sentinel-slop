@@ -51,12 +51,12 @@ moved {
   to   = module.cdn.aws_route53_record.site["A"]
 }
 
-# Every secret lives in Secrets Manager under sentinel-slop/prod/<NAME>. APP_KEY is generated here; the external
+# Every secret is an SSM SecureString under /sentinel-slop/prod/<NAME> (free, as Dog Desk does it). APP_KEY is generated here; the external
 # ones (GitHub App, Anthropic) are shells you fill in before the first deploy (README).
 module "secrets" {
   source = "../../modules/secrets"
 
-  prefix    = "sentinel-slop/prod"
+  prefix    = "/sentinel-slop/prod"
   generated = ["APP_KEY"]
   external  = ["GITHUB_APP_CLIENT_SECRET", "GITHUB_APP_WEBHOOK_SECRET", "GITHUB_APP_PRIVATE_KEY", "ANTHROPIC_API_KEY"]
 }

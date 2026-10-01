@@ -58,7 +58,7 @@ resource "aws_route_table_association" "public" {
 }
 
 resource "aws_security_group" "tasks" {
-  name        = "${var.name}-tasks"
+  name = "${var.name}-tasks"
   # Description kept from the ALB era: changing it replaces the group.
   description = "ECS tasks: only the load balancer may reach the web port"
   vpc_id      = aws_vpc.this.id

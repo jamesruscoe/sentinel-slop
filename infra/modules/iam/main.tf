@@ -45,8 +45,9 @@ data "aws_iam_policy_document" "execution" {
   }
 
   statement {
-    sid       = "Secrets"
-    actions   = ["secretsmanager:GetSecretValue"]
+    sid = "Secrets"
+    # SecureString parameters under the default aws/ssm key, which needs no kms:Decrypt grant here.
+    actions   = ["ssm:GetParameters"]
     resources = each.value
   }
 }

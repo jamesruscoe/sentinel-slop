@@ -50,15 +50,15 @@ variable "architecture" {
 }
 
 variable "app_cpu" {
-  description = "1 vCPU on Fargate Spot (~$10/month). PHPStan and Pint take about 65 ms per PHP file each on one core, so the 900 s tool timeout covers a few thousand PHP files; a larger repository loses the tool that timed out, not the scan."
+  description = "0.5 vCPU on Fargate Spot (~$5/month), Dog Desk's size. PHPStan and Pint take about 65 ms per PHP file each on a full core, so the 900 s tool timeout covers roughly 3,000 PHP files at half a core; a larger repository loses the tool that timed out, not the scan."
   type        = number
-  default     = 1024
+  default     = 512
 }
 
 variable "app_memory" {
-  description = "nginx, php-fpm, two queue workers and the scheduler share this; a scan of laravel/framework peaks around 150 MB of PHP plus Semgrep."
+  description = "2 GB (~$2.30/month on Spot), one more than Dog Desk: php.ini allows a scan 1 GB and Semgrep runs alongside nginx, php-fpm and the workers, so 1 GB would be OOM-killed mid-scan."
   type        = number
-  default     = 3072
+  default     = 2048
 }
 
 variable "github_app_id" {

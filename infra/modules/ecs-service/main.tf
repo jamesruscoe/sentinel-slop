@@ -167,7 +167,7 @@ variable "environment" {
 }
 
 variable "secrets" {
-  description = "env name => Secrets Manager ARN"
+  description = "env name => SSM parameter ARN"
   type        = map(string)
 }
 

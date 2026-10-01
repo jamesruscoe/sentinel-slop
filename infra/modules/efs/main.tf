@@ -15,8 +15,9 @@ resource "aws_efs_file_system" "this" {
 resource "aws_efs_backup_policy" "this" {
   file_system_id = aws_efs_file_system.this.id
 
+  # Off, as on Dog Desk: the data can be recreated (users log in again, scans are re-run).
   backup_policy {
-    status = "ENABLED"
+    status = "DISABLED"
   }
 }
 

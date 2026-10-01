@@ -1,8 +1,9 @@
-# One Secrets Manager secret per value under <prefix>/<NAME>, so each service's execution role can be
-# granted exactly the ARNs it needs. Generated secrets get a value here (APP_KEY as Laravel expects it);
-# external ones are shells whose value you write before the first deploy:
-#   aws secretsmanager put-secret-value --secret-id sentinel-slop/prod/ANTHROPIC_API_KEY --secret-string '...'
-#   aws secretsmanager put-secret-value --secret-id sentinel-slop/prod/GITHUB_APP_PRIVATE_KEY --secret-string "$(base64 -w0 app.pem)"
+# One SSM Parameter Store SecureString per value under <prefix>/<NAME>, as Dog Desk keeps its secrets: standard
+# parameters cost nothing (Secrets Manager was $0.40 a secret a month). Generated values get a value here (APP_KEY
+# as Laravel expects it); external ones are created with a placeholder whose value you write before the first
+# deploy, and Terraform never reads it back or overwrites it:
+#   aws ssm put-parameter --overwrite --type SecureString --name /sentinel-slop/prod/ANTHROPIC_API_KEY --value '...'
+#   aws ssm put-parameter --overwrite --type SecureString --name /sentinel-slop/prod/GITHUB_APP_PRIVATE_KEY --value "$(base64 -w0 app.pem)"
 
 resource "random_bytes" "app_key" {
   length = 32
@@ -14,29 +15,29 @@ locals {
   }
 }
 
-resource "aws_secretsmanager_secret" "generated" {
+resource "aws_ssm_parameter" "generated" {
   for_each = toset(var.generated)
 
-  name                    = "${var.prefix}/${each.key}"
-  recovery_window_in_days = 7
+  name  = "${var.prefix}/${each.key}"
+  type  = "SecureString"
+  value = local.generated_values[each.key]
 }
 
-resource "aws_secretsmanager_secret_version" "generated" {
-  for_each = toset(var.generated)
-
-  secret_id     = aws_secretsmanager_secret.generated[each.key].id
-  secret_string = local.generated_values[each.key]
-}
-
-resource "aws_secretsmanager_secret" "external" {
+resource "aws_ssm_parameter" "external" {
   for_each = toset(var.external)
 
-  name                    = "${var.prefix}/${each.key}"
-  recovery_window_in_days = 7
+  name  = "${var.prefix}/${each.key}"
+  type  = "SecureString"
+  value = "unset"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
 }
 
 variable "prefix" {
-  type = string
+  description = "Parameter path prefix, starting with a slash, e.g. /sentinel-slop/prod"
+  type        = string
 }
 
 variable "generated" {
@@ -51,8 +52,8 @@ variable "external" {
 
 output "arns" {
   value = merge(
-    { for k, s in aws_secretsmanager_secret.generated : k => s.arn },
-    { for k, s in aws_secretsmanager_secret.external : k => s.arn },
+    { for k, p in aws_ssm_parameter.generated : k => p.arn },
+    { for k, p in aws_ssm_parameter.external : k => p.arn },
   )
 }
 
